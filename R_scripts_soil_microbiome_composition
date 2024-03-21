@@ -1,0 +1,1472 @@
+#########
+#1. SOIL MICROBIOME ANALYSIS prepare files and phyloseq object
+########
+
+library(vegan)
+library(tidyverse)
+library(phyloseq)
+
+table=read.table("featureTable_Absolute/featureTable.sample.total.absolute.txt",header=T,sep="\t") ###data obtained from Novogene
+rownames(table)<-table$OTU_num
+soil_DNA_weight=read.table("soil_DNA_weight",header=T,sep="\t")
+##two samples need to be removed same name - error in sequencing
+groups=read.table("groups_no_49.txt",header=T,sep="\t") ####for each sample identify the group that belongs too
+rownames(groups)<-groups$SampleName
+###remove 49
+table2 <- table[,!names(table) %in% c("FERA.49", "FERA.49.2")]
+table_t=as.data.frame(t(table2[,c(2:155)]))
+table_t$sample<-rownames(table_t)
+
+table_t_combine=left_join(table_t, soil_DNA_weight,by=c("sample"="sample"))
+###now normalize by dividing each 
+data2_2 <- mutate_all(table_t_combine, function(x) as.numeric(as.character(x)))###convert all numeric
+####divide all for the DNA amount used to extract the DNA
+data3<- data2_2 %>%
+      mutate(across(-c(sample,DNA) , ~ ./DNA))
+
+###add column with name of samples to later tranverse table
+rownames(table_t)->samples
+data3_t=as.data.frame(t(data3))
+colnames(data3_t)<-c(samples)
+write.table(data3_t,"absolute_abundance_after_DNA.txt",sep="\t") ####final abundance considering soil amount
+
+data3_t=read.table("absolute_abundance_after_DNA.txt",sep="\t")
+data_final=data3_t
+data_final2=data_final[c(1:55575),]
+
+
+### follow https://thejacksonlaboratory.github.io/microbiome-workshop-2018/jekyll/update/2018/11/15/Analysing-16S-data-part-2.html
+
+m_count <- as.matrix(data_final2)
+taxa=read.table("taxa",header=T,sep="\t")
+taxa$Kingdom=sub("k__","",taxa$Kingdom)
+taxa$Phylum=sub("p__","",taxa$Phylum)
+taxa$Class=sub("c__","",taxa$Class)
+taxa$Order=sub("o__","",taxa$Order)
+taxa$Family=sub("f__","",taxa$Family)
+taxa$Genus=sub("g__","",taxa$Genus)
+taxa$Species=sub("s__","",taxa$Species)
+rownames(taxa)<-taxa$OTU_num
+m_tax <- as.matrix(taxa)
+OTU <- otu_table(m_count, taxa_are_rows=TRUE)
+TAX <- tax_table(m_tax)
+MD <- sample_data(groups)
+## Generate the phyloseq object
+physeq <- phyloseq(OTU, TAX, MD)
+
+
+#phyloseq-class experiment-level object
+#otu_table()   OTU Table:         [ 55575 taxa and 154 samples ]
+#sample_data() Sample Data:       [ 152 samples by 6 sample variables ]
+#tax_table()   Taxonomy Table:    [ 55575 taxa by 2 taxonomic ranks ]
+
+
+####normalize
+# get the median number of counts per sample
+
+total =as.data.frame(colSums(data_final2))
+colnames(total)<-c("mean")
+total_median = median(total$mean)
+# create a custom R function to normalize data
+myFunction = function(x, t=total_median) round(t * (x / sum(x)))
+
+# use transform_sample_counts() to apply your custom function to the count data
+physeq_norm = transform_sample_counts(physeq, myFunction)
+save.image(file = "phyloseq.RData")
+
+
+
+############
+######create a phylogenetic tree
+####add tree
+library(ape)
+tree=read.tree("02.FeatureAnalysis/rooted-tree_qza/tree.nwk") ### data from Novogene
+physeq@phy_tree<-tree
+
+total =as.data.frame(colSums(data_final2))
+colnames(total)<-c("mean")
+total_median = median(total$mean)
+# create a custom R function to normalize data
+myFunction = function(x, t=total_median) round(t * (x / sum(x)))
+
+# use transform_sample_counts() to apply your custom function to the count data
+physeq_norm = transform_sample_counts(physeq, myFunction)
+save.image(file = "phyloseq.RData")
+
+
+
+##########
+#2.Alpha diversity
+##########
+
+load(file = "phyloseq.RData")
+pruned <- prune_taxa(taxa_sums(physeq) > 0, physeq)
+
+#otu_table()   OTU Table:         [ 55131 taxa and 154 samples ]
+#sample_data() Sample Data:       [ 154 samples by 10 sample variables ]
+#tax_table()   Taxonomy Table:    [ 55131 taxa by 8 taxonomic ranks ]
+#phy_tree()    Phylogenetic Tree: [ 55131 tips and 54890 internal nodes ]
+
+###now define groups
+
+sample_data(pruned)$category <- factor(groups$category2)
+OTU_table=as.data.frame(t(physeq@otu_table))
+
+###########https://scienceparkstudygroup.github.io/microbiome-lesson/04-alpha-diversity/index.html
+OTU_table2= transform_sample_counts(physeq@otu_table, as.integer)
+OTU_table3=as.data.frame(t(OTU_table2))
+data_richness <- estimateR(OTU_table3)                                            # calculate richness and Chao1 using vegan package
+data_evenness <- diversity(OTU_table) / log(specnumber(OTU_table))                # calculate evenness index using vegan package
+data_shannon <- diversity(OTU_table, index = "shannon")                          # calculate Shannon index using vegan package
+data_alphadiv <- cbind(MD, t(data_richness), data_shannon, data_evenness) # combine all indices in one data table
+write.table(data_alphadiv,"data_alphadiv_all.txt",sep="\t")
+data_alphadiv=read.table("data_alphadiv_all.txt",sep="\t",header=T)
+
+####################STATS to compare the groups for each treatment - "JI","Compost","Control","Phages_diseased","Phages_healthy","Rs_diseased","Rs_healthy"
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+###first check outliers
+data_alphadiv %>% 
+  group_by(category2) %>%
+  identify_outliers(data_shannon)
+data_alphadiv$Phages=factor(data_alphadiv$Phages,levels=c("Compost","Control","Individual","Double","Ralstonia_only"))
+data_alphadiv$category2=factor(data_alphadiv$category2,levels=c("JI","Compost","Control","Phages_diseased","Phages_healthy","Rs_diseased","Rs_healthy"))
+
+model  <- lm(data_shannon ~ category2, data = data_alphadiv)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- data_alphadiv %>% kruskal_test(data_shannon ~ category2)
+res.kruskal
+
+##Result Kruskal is
+#####  data_shannon   154      83.5     6 6.63e-16 Kruskal-Wallis
+
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(agricolae)
+library(FSA)
+library(rcompanion)
+####now wilcox test 
+pwc2 <-   dunnTest(data_shannon ~ category2, data=data_alphadiv,method = "bonferroni")
+pwc2_res<-pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+
+names(cld)[1]<-"category2" # change the name of grouping factor according to the dataset (df)
+cld
+
+color_table <-  tibble(
+  Group_Name = c( "JI","Compost","Control","Phages_diseased","Phages_healthy","Rs_diseased","Rs_healthy"),
+  Color = c("black","#888888","#666666","#0072B2","#88CCEE","#661100","#CC6677")  )
+ylim1=1.5*(max(data_alphadiv$data_shannon))
+ylim2=1.2*(max(data_alphadiv$data_shannon))
+tiff("Shannon_stats.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=data_alphadiv,, x = "category2", y = "data_shannon",
+  fill = "category2")+ ylim(0,ylim1)+ theme_bw() +
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = category2), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Shannon index")+
+  ggtitle("Shannon index")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme(text = element_text(size = 25))
+dev.off()
+
+
+
+##########
+#3.Beta diversity
+##########
+#######PcoA
+
+data_phylo_filt = filter_taxa(physeq, function(x) sum(x > 2) > (0.11 * length(x)), TRUE) 
+set.seed(2747) # set seed for analysis reproducibility
+OTU_filt_rar = rarefy_even_depth(otu_table(data_phylo_filt), rngseed = TRUE, replace = T) # rarefy the raw data using Phyloseq package
+data_otu_filt_rar = data.frame(otu_table(OTU_filt_rar)) # create a separated file
+data_phylo_filt_rar <- phyloseq(OTU_filt_rar, TAX, MD) 
+
+dist_bc <- as.matrix(vegdist(data_otu_filt_rar, method = "bray")) 
+# a peek at the first five rows / columns
+dist_bc[1:5, 1:5]
+pcoa_bc = ordinate(data_phylo_filt_rar, "PCoA", "bray") 
+
+tiff("PcoA_category2.tiff",res=300,he=150,wi=150,units="mm")
+plot_ordination(data_phylo_filt_rar, pcoa_bc, color = "category2") + 
+  geom_point(size = 3) +
+  scale_color_manual(values =  color_table$Color) 
+dev.off()
+
+#######NMDS
+
+OTU_table=as.data.frame(t(physeq@otu_table))
+OTU_table2= transform_sample_counts(physeq@otu_table, as.integer)
+OTU_table3=as.data.frame(t(OTU_table2))
+data_richness <- estimateR(OTU_table3)  ###this done for alpha
+data_phylo_filt = filter_taxa(physeq, function(x) sum(x > 2) > (0.11 * length(x)), TRUE)
+set.seed(2747) # set seed for analysis reproducibility
+
+OTU_filt_rar = rarefy_even_depth(otu_table(data_phylo_filt), rngseed = TRUE, replace = T) # rarefy the raw data using Phyloseq package
+data_otu_filt_rar = data.frame(otu_table(OTU_filt_rar)) # create a separated file
+data_phylo_filt_rar <- phyloseq(OTU_filt_rar, TAX, MD)
+#otu_table()   OTU Table:         [ 2747 taxa and 154 samples ]
+#sample_data() Sample Data:       [ 154 samples by 10 sample variables ]
+#tax_table()   Taxonomy Table:    [ 2747 taxa by 8 taxonomic ranks ]
+
+
+
+###########https://scienceparkstudygroup.github.io/microbiome-lesson/04-alpha-diversity/index.html
+metadata=data.frame(data_phylo_filt_rar@sam_data) ###dont do as.data.frame but instead dada.frame https://github.com/joey711/phyloseq/issues/190
+#####test if groups are different with PERMANOVA https://data.marcoplebani.com/annotated-code-for-performing-multivariate-statistics/
+library(devtools)
+if (!require(pairwiseAdonis)) install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+library(pairwiseAdonis)
+
+
+####Adonis
+adonis_category=adonis2(data_otu_filt_rar2 ~ category2,data=metadata, permutations=999, method="bray")
+
+##Result adonis_category
+# Permutation test for adonis under reduced model
+#Terms added sequentially (first to last)
+#Permutation: free
+#Number of permutations: 999
+
+#adonis2(formula = data_otu_filt_rar2 ~ category2, data = metadata, permutations = 999, method = "bray")
+#           Df SumOfSqs     R2      F Pr(>F)    
+#category2   6    6.263 0.1957 5.9613  0.001 ***
+#Residual  147   25.738 0.8043                  
+#Total     153   32.000 1.0000                  
+#---
+#Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+#####Pairwise
+iris.adonis.pw <- pairwise.adonis(x = data_otu_filt_rar2,
+                    factors= metadata$category2,
+                    sim.method='euclidean',
+                    p.adjust.m='holm',perm = 999)
+iris.adonis.pw <- as.data.frame(iris.adonis.pw)
+iris.adonis.pw$F.Model <- round(iris.adonis.pw$F.Model, 2)
+iris.adonis.pw$R2 <- round(iris.adonis.pw$R2, 2)
+iris.adonis.pw
+
+#                              pairs Df  SumsOfSqs F.Model   R2 p.value p.adjusted sig
+#1                      Compost vs JI  1   66532485    9.96 0.50   0.003      0.045   .
+#2          Compost vs Phages_healthy  1  833762192    3.13 0.04   0.036      0.170    
+#3         Compost vs Phages_diseased  1 1116539016    4.37 0.08   0.014      0.112    
+#4                 Compost vs Control  1  203693843    5.46 0.25   0.003      0.045   .
+#5             Compost vs Rs_diseased  1 1590644874   20.27 0.65   0.001      0.021   .
+#6              Compost vs Rs_healthy  1  268418071   15.10 0.63   0.004      0.048   .
+#7               JI vs Phages_healthy  1  892494639    3.34 0.04   0.034      0.170    
+#8              JI vs Phages_diseased  1 1107409382    4.32 0.08   0.019      0.119    
+#9                      JI vs Control  1  271772032    6.93 0.30   0.001      0.021   .
+#10                 JI vs Rs_diseased  1 1527330624   18.80 0.63   0.002      0.032   .
+#11                  JI vs Rs_healthy  1  295947366   13.98 0.61   0.001      0.021   .
+#12 Phages_healthy vs Phages_diseased  1 2054821185    7.23 0.06   0.004      0.048   .
+#13         Phages_healthy vs Control  1 1484413957    5.85 0.07   0.005      0.050   .
+#14     Phages_healthy vs Rs_diseased  1 2998823413   10.94 0.13   0.003      0.045   .
+#15      Phages_healthy vs Rs_healthy  1  751033584    2.76 0.04   0.065      0.170    
+#16        Phages_diseased vs Control  1 1945851515    8.15 0.12   0.001      0.021   .
+#17    Phages_diseased vs Rs_diseased  1 1189142204    4.46 0.08   0.017      0.119    
+#18     Phages_diseased vs Rs_healthy  1  714420416    2.72 0.05   0.055      0.170    
+#19            Control vs Rs_diseased  1 1919281685   22.92 0.57   0.001      0.021   .
+#20             Control vs Rs_healthy  1   82865810    1.72 0.10   0.130      0.170    
+#21         Rs_diseased vs Rs_healthy  1  860969312    8.73 0.47   0.007      0.063    
+
+
+NMDS <- metaMDS(as.data.frame(t(OTU_filt_rar)))
+NMDS
+
+metaMDS(comm = as.data.frame(t(OTU_filt_rar)))
+
+plot_df <- scores(NMDS, display = "sites") %>% 
+  as.data.frame() %>% 
+  rownames_to_column("SampleName") %>% 
+  full_join(groups, by = "SampleName")
+
+tiff("NMDS1_category.tiff",res=300,he=200,wi=200,units="mm")
+ggplot(plot_df, aes(x = NMDS1, y = NMDS2, color = category2, shape = category2)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_color_manual(values =  color_table$Color) +
+  stat_ellipse(linetype = 2, size = 1) +
+  labs(title = "NMDS")
+dev.off()
+
+
+
+##########
+#4.Composition of the soil microbiome at the end of the experiment
+##########
+
+library(vegan)
+library(phyloseq)
+library(tidyverse)
+library(patchwork)
+library(agricolae)
+library(FSA)
+library(rcompanion)
+
+
+data_phylo_filt = filter_taxa(physeq, function(x) sum(x > 2) > (0.11 * length(x)), TRUE) ###at least in 11% samples which matches that couple of them have 11 replicates
+set.seed(2747) # set seed for analysis reproducibility
+OTU_filt_rar = rarefy_even_depth(otu_table(data_phylo_filt), rngseed = TRUE, replace = T) # rarefy the raw data using Phyloseq package
+data_otu_filt_rar = data.frame(otu_table(OTU_filt_rar)) # create a separated file
+data_phylo_filt_rar <- phyloseq(OTU_filt_rar, TAX, MD) 
+
+
+#####prepare data from rarefy data   https://scienceparkstudygroup.github.io/microbiome-lesson/07-bacterial-composition/index.html
+data_taxo_filt_rar <- data.frame(m_tax[which(rownames(m_tax) %in% rownames(data_otu_filt_rar)),])
+data_taxo_filt_rar$OTU_id <- rownames(data_taxo_filt_rar) # add the rownames in a column in order to be able to use it later with dplyr
+metadata=data.frame(physeq@sam_data) ###dont do as.data.frame but instead dada.frame https://github.com/joey711/phyloseq/issues/190
+
+data_grp_temp <- metadata
+data_grp_temp$sample_id <- rownames(data_grp_temp) # to be able to use the column later with dplyr
+data_otu_filt_rar_temp <- data.frame(t(data_otu_filt_rar))
+data_otu_filt_rar_temp$sample_id <- rownames(data_otu_filt_rar_temp) # to be able to use the column later with dplyr
+data_otu_grp_filt_rar <- inner_join(data_grp_temp, data_otu_filt_rar_temp, by = "sample_id")
+data_otu_grp_filt_rar[1:5, 1:13] ####2758 154
+
+data_otu_filt_rar_category <- aggregate(data_otu_grp_filt_rar[,12:2758], by = list(category=data_otu_grp_filt_rar$category2), sum)
+dim(data_otu_filt_rar_category) ###7 2748
+
+# Transpose the full OTU data table, data_otu_filt_rar
+data_otu_filt_rar_category_temp <- as.data.frame(t(as.matrix(data_otu_filt_rar_category[,2:dim(data_otu_filt_rar_category)[2]])))
+colnames(data_otu_filt_rar_category_temp) <- data_otu_filt_rar_category[,1]
+data_otu_filt_rar_category_temp$total_counts <- rowSums(data_otu_filt_rar_category_temp)
+data_otu_filt_rar_category_temp$OTU_id <- rownames(data_otu_filt_rar_category_temp)
+head(data_otu_filt_rar_category_temp)
+
+# Combine the two OTU tables, the aggregated OTU table (data_otu_filt_rar_site_month_temp) with data_otu_filt_rar_t
+data_otu_filt_rar_t <- as.data.frame(as.matrix(data_otu_filt_rar))
+data_otu_filt_rar_t$OTU_id <- rownames(data_otu_filt_rar_t)
+# Combine the two OTU tables, the aggregated OTU table (data_otu_filt_rar_site_month_temp) with data_otu_filt_rar_t
+data_otu_filt_rar_temp <- inner_join(data_otu_filt_rar_category_temp, data_otu_filt_rar_t, by = "OTU_id")
+data_otu_filt_rar_temp[1:5, 1:5]
+
+
+# Combine the taxonomic table, data_taxo_filt_rar, with the new OTU table, data_otu_filt_rar_temp
+data_otu_taxo_filt_rar <- inner_join(data_taxo_filt_rar, data_otu_filt_rar_temp, by = "OTU_id")
+dim(data_otu_taxo_filt_rar)
+data_otu_taxo_filt_rar[1:5, 1:5]
+write.table(data_otu_taxo_filt_rar,"data_otu_taxo_filt_rar_category.txt",sep="\t")
+data_otu_taxo_filt_rar=read.table("data_otu_taxo_filt_rar_category.txt",sep="\t")
+
+######Rare phyla combine them
+# Filter abundant Phyla
+abundant_com <- data_otu_taxo_filt_rar %>%
+  select(Class, total_counts) %>%
+  group_by(Class) %>%
+  summarize(total_counts_per_phylum = sum(total_counts)) %>%
+  ungroup() %>%
+  mutate(total_counts_percentage = total_counts_per_phylum / sum(total_counts_per_phylum) * 100) %>%
+  filter(total_counts_percentage >= 1) %>%
+  select(Class, total_counts_percentage)
+
+# Compile rare Phyla
+# Data table global communities simplified
+rare_com <- tibble(Class=c("Rare_Phyla"),total_counts_percentage=100-sum(abundant_com$total_counts_percentage))
+global_com <- bind_rows(abundant_com,rare_com)
+
+# Sum per Phyla
+com_per_treatment_phylum_temp <- aggregate(data_otu_taxo_filt_rar[, 10:17], by=list(Phylum=data_otu_taxo_filt_rar$Phylum), sum)
+
+# Tidying the data set
+com_per_treatment_phylum <- com_per_treatment_phylum_temp %>%
+  gather(key   = treatment, value = obs_values,-Phylum)
+
+library(paletteer)
+paleteer1=paletteer_d("ggsci::default_igv")
+
+# Barplot
+tiff("Phylum_category_barplot.tiff",res=300,he=200,wi=200,units="mm")
+com_per_treatment_phylum %>%
+  mutate(treatment = fct_relevel(treatment,  "JI","Compost","Control","Phages_diseased","Phages_healthy","Rs_diseased","Rs_healthy")) %>%
+  ggplot(., aes(x = treatment, y = obs_values, fill = Phylum)) +
+  geom_bar(position = "fill", stat = "identity", width = 0.9, color = "white") +
+  theme(legend.title = element_blank(), legend.text = element_text(size = 7)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +scale_fill_manual(values=paleteer1)+
+  labs(title= 'Bacterial community composition at Phylum level', x= '', y= 'Proportion of the total counts')+
+  theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 15))
+
+dev.off()
+
+
+#######Calculate Relative abundance
+dim(data_otu_taxo_filt_rar)
+sum=sum(data_otu_taxo_filt_rar$total_counts)# [1] 11096008
+
+data_otu_filter=data_otu_taxo_filt_rar [,c(1,18:171)]
+data_otu_filter2=as.data.frame(t(data_otu_filter))
+colnames(data_otu_filter2)=data_otu_filter2[1,]
+data_otu_filter3=data_otu_filter2[-1,]
+data_otu_filter3 <- mutate_all(data_otu_filter3, function(x) as.numeric(as.character(x)))###convert all numeric, have 154 samples, 55577 OTUs
+
+
+data_otu_filter3$OTU_num=rownames(data_otu_filter3)
+data_otu_filter4=data_otu_filter3 %>%
+      mutate(across(-c(OTU_num) , ~ ./72052)) #####
+data_otu_filter5=data_otu_filter4 %>%
+      mutate(across(-c(OTU_num) , ~ .*100))
+write.table(data_otu_filter5,"relative_2747_all_samples.txt",sep="\t")
+
+
+
+##########
+#4.Random forest to identify which taxa is associated to healthy/diseased plants
+##########
+library(randomForest)
+library(vegan)
+library(phyloseq)
+library(tidyverse)
+library(patchwork)
+library(agricolae)
+library(FSA)
+library(rcompanion)
+
+data_phylo_filt = filter_taxa(physeq, function(x) sum(x > 2) > (0.11 * length(x)), TRUE) ###at least in 11% samples which matches that couple of them have 11 replicates
+set.seed(2747) # set seed for analysis reproducibility
+OTU_filt_rar = rarefy_even_depth(otu_table(data_phylo_filt), rngseed = TRUE, replace = T) # rarefy the raw data using Phyloseq package
+data_otu_filt_rar = data.frame(otu_table(OTU_filt_rar)) # create a separated file
+data_phylo_filt_rar <- phyloseq(OTU_filt_rar, TAX, MD) 
+
+#####prepare data from rarefy data   https://scienceparkstudygroup.github.io/microbiome-lesson/07-bacterial-composition/index.html
+data_taxo_filt_rar <- data.frame(m_tax[which(rownames(m_tax) %in% rownames(data_otu_filt_rar)),])
+data_taxo_filt_rar$OTU_id <- rownames(data_taxo_filt_rar) # add the rownames in a column in order to be able to use it later with dplyr
+metadata=data.frame(physeq@sam_data)
+
+#######to_use 
+OTUs_t=as.data.frame(t(OTU_filt_rar)) ##2747
+
+# Make one column for our outcome/response variable 
+groups=read.table("groups",header=T,sep="\t") ####groups of each sample
+disease <- as.data.frame(groups[,c(1,6)])
+
+OTUs_t$names=rownames(OTUs_t)
+rf.data = left_join(disease, OTUs_t,by=c("SampleName"="names"))
+rf.data2=rf.data[-grep("Control|Compost", rf.data$category),] 
+
+
+#####remove BEFORE AND JI and control for predicting DISEASE AND HEALTHY
+rf.data2=rf.data2[,-1] #130 2748
+rf.data2$category <- factor(rf.data2$category)
+
+
+####run the RF
+set.seed(2)
+rf.data2$disease <- factor(rf.data2$disease)
+erie.classify <- randomForest(category~., data = rf.data2, ntree = 1000,proximity=TRUE)
+print(erie.classify)
+save.image(file = "RF.RData")
+
+###try list
+hundred=c(1:100)
+hundred_list=list(1:100)
+classify <- list()
+for (i in 1:100){
+classify[[i]] <- randomForest(category~., data = rf.data2, ntree = 500,proximity=TRUE)
+print(classify[[i]])
+}
+save.image(file = "RF_loop.RData")
+
+###classify is a list
+library(tidyverse)
+library(randomForest)
+#classify <- list()
+imp<-list()
+imp.sort<-list()
+
+for (i in 1:100){
+classify[[i]] <- randomForest(disease~., data = rf.data2, ntree = 500,proximity=TRUE)
+print(classify[[i]])
+imp[[i]] <- importance(classify[[i]])
+imp[[i]] <- data.frame(predictors = rownames(imp[[i]]), imp[[i]])
+imp.sort[[i]] <- arrange(imp[[i]],desc(MeanDecreaseGini))
+imp.sort[[i]]$predictors <- factor(imp.sort[[i]]$predictors, levels = imp.sort[[i]]$predictors)
+######imp is a list of 100
+}
+
+sum=as.list(rowSums(sapply(imp.sort, unlist)))
+sum=as.data.frame(do.call(rbind, lapply(imp.sort, function(i)rowSums(i['MeanDecreaseGini']))))
+write.table(sum,"sum_all_RF_100loops.txt",sep="\t")
+
+######subset only Gini average > 0.6
+total =as.data.frame(sapply(sum, mean, na.rm = T))
+colnames(total)<-c("MeanDecreaseGini_average")
+ordered_total <- subset(total, total$MeanDecreaseGini_average>=0.6)
+write.table(ordered_total,"sum_RF_100_loops_gini_min0.6.txt",sep="\t")
+write.table(total,"sum_RF_100_loops_all.txt",sep="\t")
+
+data_taxo_filt_rar <- data.frame(m_tax[which(rownames(m_tax) %in% rownames(data_otu_filt_rar)),])
+ordered_total$OTU_num<-rownames(ordered_total)
+ordered_total_tax=left_join(ordered_total,data_taxo_filt_rar,by="OTU_num")
+write.table(ordered_total_tax,"sum_RF_100_loops_gini_min0.6_tax.txt",sep="\t")
+
+total$OTU_num<-rownames(total)
+total_tax=left_join(total,data_taxo_filt_rar,by="OTU_num")
+write.table(total_tax,"sum_RF_100_loops_all_tax.txt",sep="\t")
+
+total_tax2=as.data.frame(total_tax%>%group_by(Genus)%>% summarise(MeanDecreaseGini_average_sum=sum(MeanDecreaseGini_average)))
+write.table(total_tax2,"sum_RF_100_loops_all_tax_genus.txt",sep="\t")
+
+total_tax2=as.data.frame(total_tax%>%group_by(Family)%>% summarise(MeanDecreaseGini_average_sum=sum(MeanDecreaseGini_average)))
+write.table(total_tax2,"sum_RF_100_loops_all_tax_family.txt",sep="\t")
+
+total_tax2=read.table("sum_RF_100_loops_all_tax_family.txt",sep="\t", header=T)
+
+
+
+##########
+#5. Plot Ralstonia counts and the rest of the RF taxa - prepare files
+##########
+
+data_phylo_filt = filter_taxa(physeq, function(x) sum(x > 2) > (0.11 * length(x)), TRUE) ###at least in 11% samples which matches that couple of them have 11 replicates
+set.seed(2747) # set seed for analysis reproducibility
+OTU_filt_rar = rarefy_even_depth(otu_table(data_phylo_filt), rngseed = TRUE, replace = T) # rarefy the raw data using Phyloseq package
+data_otu_filt_rar = data.frame(otu_table(OTU_filt_rar)) # create a separated file
+data_phylo_filt_rar <- phyloseq(OTU_filt_rar, TAX, MD) 
+
+
+#####prepare data from rarefy data   https://scienceparkstudygroup.github.io/microbiome-lesson/07-bacterial-composition/index.html
+data_taxo_filt_rar <- data.frame(m_tax[which(rownames(m_tax) %in% rownames(data_otu_filt_rar)),])
+data_taxo_filt_rar$OTU_id <- rownames(data_taxo_filt_rar) # add the rownames in a column in order to be able to use it later with dplyr
+metadata=data.frame(data_phylo_filt_rar@sam_data) ###dont do as.data.frame but instead dada.frame https://github.com/joey711/phyloseq/issues/190
+
+data_grp_temp <- metadata
+data_grp_temp$sample_id <- rownames(data_grp_temp) # to be able to use the column later with dplyr
+data_otu_filt_rar$OTU_id<-rownames(data_otu_filt_rar)
+data_otu_filt_rar_join=left_join(data_otu_filt_rar, data_taxo_filt_rar, by="OTU_id")
+keep=c("Burkholderia-Caballeronia-Paraburkholderia","Gemmatimonas","Lactobacillus","Muribaculaceae","Pseudomonas","Sphingomonas","Muribaculaceae","Rhodanobacter","Ralstonia")
+data_filt=data_otu_filt_rar_join[data_otu_filt_rar_join$Genus %in% keep, ]
+data_filt
+write.table(data_filt,"filt_Genus_RF.txt",sep="\t")
+rownames(data_filt)<-data_filt$OTU_num
+data_filt2=data_filt[,c(1:154,162)]
+######Group by
+library(dplyr)
+data_filt2 <- data_filt2 %>% group_by(Genus) %>% summarise_each(funs(sum)) %>%   as.data.frame()
+
+####data_filt2 <- data_filt2 %>% group_by(Genus) %>% summarise(sum) %>%   as.data.frame()
+write.table(data_filt2,"filt_Genus_RF2.txt",sep="\t")
+
+
+data_otu_filt_rar_temp <- data.frame(t(data_filt2))
+data_otu_filt_rar_temp=data_otu_filt_rar_temp[-1,]
+data_otu_filt_rar_temp$sample_id <- rownames(data_otu_filt_rar_temp) # to be able to use the column later with dplyr
+data_otu_grp_filt_rar <- inner_join(data_grp_temp, data_otu_filt_rar_temp, by = "sample_id")
+data_otu_grp_filt_rar[1:5, 1:15] ####154 15
+write.table(data_otu_grp_filt_rar,"RF_topall_samples_final_8.txt",sep="\t")
+
+
+
+##########
+#6. Plot Ralstonia counts and the rest of the RF taxa - plots
+##########
+table_top4=read.table("RF_topall_samples_final_8.txt",sep="\t", header=T)
+table_top4=table_top4[,c(1,12:19)]
+
+table_top4=left_join(table_top4,groups)
+table_top4$Burkholderia.Caballeronia.Paraburkholderia=as.numeric(table_top4$Burkholderia.Caballeronia.Paraburkholderia)
+table_top4$Gemmatimonas=as.numeric(table_top4$Gemmatimonas)
+table_top4$Lactobacillus=as.numeric(table_top4$Lactobacillus)
+table_top4$Muribaculaceae=as.numeric(table_top4$Muribaculaceae)
+table_top4$Pseudomonas=as.numeric(table_top4$Pseudomonas)
+table_top4$Sphingomonas=as.numeric(table_top4$Sphingomonas)
+table_top4$Muribaculaceae=as.numeric(table_top4$Muribaculaceae)
+table_top4$Rhodanobacter=as.numeric(table_top4$Rhodanobacter)
+table_top4$Ralstonia=as.numeric(table_top4$Ralstonia)
+table_top4$category2=factor(table_top4$category2,levels=c("JI","Compost","Control","Phages_diseased","Phages_healthy","Rs_diseased","Rs_healthy"))
+
+
+
+###Burkholderia.Caballeronia.Paraburkholderia
+
+model  <- lm(Burkholderia.Caballeronia.Paraburkholderia ~ category2, data = table_top4)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- table_top4 %>% kruskal_test(Burkholderia.Caballeronia.Paraburkholderia ~ category2)
+res.kruskal
+
+#  Burkholderia.Caballeronia.Paraburkholderia   154      24.9     6 0.000355 Kruskal-Wallis
+
+library(FSA)
+pwc2 <- dunnTest(Burkholderia.Caballeronia.Paraburkholderia ~ category2, data=table_top4, method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"category2" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Burkholderia.Caballeronia.Paraburkholderia))
+ylim2=1.2*(max(table_top4$Burkholderia.Caballeronia.Paraburkholderia))
+tiff("Burkholderia.Caballeronia.Paraburkholderia_category_stats.tiff",res=300,he=200,wi=280,units="mm")
+ ggboxplot(data=table_top4,, x = "category2", y = "Burkholderia.Caballeronia.Paraburkholderia",
+  fill = "category2")+theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = category2), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Burkholderia.Caballeronia.Paraburkholderia counts")+
+  ggtitle("Burkholderia.Caballeronia.Paraburkholderia counts")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+###Gemmatimonas
+
+model  <- lm(Gemmatimonas ~ category2, data = table_top4)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- table_top4 %>% kruskal_test(Gemmatimonas ~ category2)
+res.kruskal
+
+#Gemmatimonas   154      5.81     6 0.445 Kruskal-Wallis
+
+library(FSA)
+pwc2 <- dunnTest(Gemmatimonas ~ category2,data=table_top4,method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"category2" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Gemmatimonas))
+ylim2=1.2*(max(table_top4$Gemmatimonas))
+tiff("Gemmatimonas_category_stats.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=table_top4,, x = "category2", y = "Gemmatimonas",
+  fill = "category2")+theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = category2), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Gemmatimonas counts")+
+  ggtitle("Gemmatimonas counts")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+###Lactobacillus
+
+model  <- lm(Lactobacillus ~ category2, data = table_top4)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- table_top4 %>% kruskal_test(Lactobacillus ~ category2)
+res.kruskal
+
+#  Lactobacillus   154      32.4     6 0.0000135 Kruskal-Wallis
+
+library(FSA)
+pwc2 <- dunnTest(Lactobacillus ~ category2,data=table_top4,method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"category2" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Lactobacillus))
+ylim2=1.2*(max(table_top4$Lactobacillus))
+tiff("Lactobacillus_category2_stats.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=table_top4,, x = "category2", y = "Lactobacillus",
+  fill = "category2")+theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = category2), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Lactobacillus counts")+
+  ggtitle("Lactobacillus counts")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+###Muribaculaceae
+
+model  <- lm(Muribaculaceae ~ category2, data = table_top4)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- table_top4 %>% kruskal_test(Muribaculaceae ~ category2)
+res.kruskal
+
+#####  Muribaculaceae   154      43.9     6 0.0000000756 Kruskal-Wallis
+
+library(FSA)
+pwc2 <- dunnTest(Muribaculaceae ~ category2,data=table_top4,method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"category2" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Muribaculaceae))
+ylim2=1.2*(max(table_top4$Muribaculaceae))
+tiff("Muribaculaceae_category_stats.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=table_top4,, x = "category2", y = "Muribaculaceae",
+  fill = "category2")+theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = category2), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Muribaculaceae counts")+
+  ggtitle("Muribaculaceae counts")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+###Sphingomonas
+
+model  <- lm(Sphingomonas ~ category2, data = table_top4)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- table_top4 %>% kruskal_test(Sphingomonas ~ category2)
+res.kruskal
+
+#####  Sphingomonas   154      50.0     6 0.00000000473 Kruskal-Wallis
+
+pwc2 <- dunnTest(Sphingomonas ~ category2,data=table_top4,method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"category2" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Sphingomonas))
+ylim2=1.2*(max(table_top4$Sphingomonas))
+tiff("Sphingomonas_category2_stats.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=table_top4,, x = "category2", y = "Sphingomonas",
+  fill = "category2")+ theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = category2), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=6.8,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Sphingomonas counts")+
+  ggtitle("Sphingomonas counts")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+###Rhodanobacter
+
+model  <- lm(Rhodanobacter ~ category2, data = table_top4)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- table_top4 %>% kruskal_test(Rhodanobacter ~ category2)
+res.kruskal
+
+#####   Rhodanobacter   154      32.9     6 0.0000108 Kruskal-Wallis
+
+pwc2 <- dunnTest(Rhodanobacter ~ category2,data=table_top4,method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"category2" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Rhodanobacter))
+ylim2=1.2*(max(table_top4$Rhodanobacter))
+tiff("Rhodanobacter_category2_stats.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=table_top4,, x = "category2", y = "Rhodanobacter",
+  fill = "category2")+ theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = category2), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Rhodanobacter counts")+
+  ggtitle("Rhodanobacter counts")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 18))
+dev.off()
+
+
+
+###Ralstonia
+
+model  <- lm(Ralstonia ~ category2, data = table_top4)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- table_top4 %>% kruskal_test(Ralstonia ~ category2)
+res.kruskal
+
+#####    Ralstonia   154      82.3     6 1.17e-15 Kruskal-Wallis
+
+pwc2 <- dunnTest(Ralstonia ~ category2,data=table_top4,method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"category2" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Ralstonia))
+ylim2=1.2*(max(table_top4$Ralstonia))
+tiff("Ralstonia_category2_stats.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=table_top4,, x = "category2", y = "Ralstonia",
+  fill = "category2")+ theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = category2), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Ralstonia counts")+
+  ggtitle("Ralstonia counts")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 18))
+dev.off()
+
+
+
+###Pseudomonas
+
+model  <- lm(Pseudomonas ~ category2, data = table_top4)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- table_top4 %>% kruskal_test(Pseudomonas ~ category2)
+res.kruskal
+
+#Pseudomonas   154      34.4     6 0.00000551 Kruskal-Wallis
+
+pwc2 <- dunnTest(Pseudomonas ~ category2,data=table_top4,method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"category2" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Pseudomonas))
+ylim2=1.2*(max(table_top4$Pseudomonas))
+tiff("Pseudomonas_category2_stats.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=table_top4,, x = "category2", y = "Pseudomonas",
+  fill = "category2")+ theme_bw() +ylim(0,ylim1) +
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = category2), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Pseudomonas counts")+
+  ggtitle("Pseudomonas counts")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 18))
+dev.off()
+
+
+
+
+
+##################T.TESTs comparing phage healthy vs phage diseased
+table_top_2=table_top4%>%filter(category2=="Phages_healthy" | category2=="Phages_diseased")
+table_top_2$category2=factor(table_top_2$category2,levels=c("Phages_healthy","Phages_diseased"))
+stat.test <- table_top_2 %>% 
+  t_test(Burkholderia.Caballeronia.Paraburkholderia ~ category2) %>%
+  add_significance()
+stat.test
+
+#  .y.                  group1 group2    n1    n2 statistic    df      p p.signif
+#  <chr>                <chr>  <chr>  <int> <int>     <dbl> <dbl>  <dbl> <chr>   
+#1 Burkholderia.Caball… Phage… Phage…    70    48      2.08  116. 0.0398 *       
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Gemmatimonas ~ category2) %>%
+  add_significance()
+stat.test
+#  .y.          group1         group2     n1    n2 statistic    df     p p.signif
+#  <chr>        <chr>          <chr>   <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Gemmatimonas Phages_healthy Phages…    70    48     0.258  108. 0.797 ns 
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Lactobacillus ~ category2) %>%
+  add_significance()
+stat.test
+#  .y.           group1         group2    n1    n2 statistic    df     p p.signif
+#  <chr>         <chr>          <chr>  <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Lactobacillus Phages_healthy Phage…    70    48      1.31  103. 0.194 ns      
+
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Muribaculaceae ~ category2) %>%
+  add_significance()
+stat.test
+
+#            group1       group2    n1    n2 statistic    df      p p.signif
+#  <chr>          <chr>        <chr>  <int> <int>     <dbl> <dbl>  <dbl> <chr>   
+#1 Muribaculaceae Phages_heal… Phage…    70    48     -1.92  58.0 0.0603 ns    
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Sphingomonas ~ category2) %>%
+  add_significance()
+stat.test
+
+#          group1         group2     n1    n2 statistic    df     p p.signif
+#  <chr>        <chr>          <chr>   <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Sphingomonas Phages_healthy Phages…    70    48      1.01  108. 0.314 ns 
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Rhodanobacter ~ category2) %>%
+  add_significance()
+stat.test
+
+#  .y.           group1         group2    n1    n2 statistic    df     p p.signif
+#  <chr>         <chr>          <chr>  <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Rhodanobacter Phages_healthy Phage…    70    48     0.832  110. 0.407 ns      
+ 
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Ralstonia ~ category2) %>%
+  add_significance()
+stat.test
+
+#  .y.       group1         group2      n1    n2 statistic    df       p p.signif
+#  <chr>     <chr>          <chr>    <int> <int>     <dbl> <dbl>   <dbl> <chr>   
+#1 Ralstonia Phages_healthy Phages_…    70    48     -6.59  59.9 1.24e-8 **** 
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Pseudomonas ~ category2) %>%
+  add_significance()
+stat.test
+
+#  .y.         group1         group2    n1    n2 statistic    df       p p.signif
+#  <chr>       <chr>          <chr>  <int> <int>     <dbl> <dbl>   <dbl> <chr>   
+#1 Pseudomonas Phages_healthy Phage…    70    48      3.23  102. 0.00168 **      
+
+
+
+
+##################T.TESTs comparing phage diseased vs bacteria-only disease
+table_top_2=table_top4%>%filter(category2=="Rs_diseased" | category2=="Phages_diseased")
+table_top_2$category2=factor(table_top_2$category2,levels=c("Rs_diseased","Phages_diseased"))
+stat.test <- table_top_2 %>% 
+  t_test(Burkholderia.Caballeronia.Paraburkholderia ~ category2) %>%
+  add_significance()
+stat.test
+
+#     group1 group2    n1    n2 statistic    df     p p.signif
+#  <chr>                 <chr>  <chr>  <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Burkholderia.Caballe… Rs_di… Phage…     7    48      1.01  7.42 0.345 ns  
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Gemmatimonas ~ category2) %>%
+  add_significance()
+stat.test
+
+#   .y.          group1      group2        n1    n2 statistic    df     p p.signif
+#  <chr>        <chr>       <chr>      <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Gemmatimonas Rs_diseased Phages_di…     7    48     -1.45  17.2 0.165 ns    
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Lactobacillus ~ category2) %>%
+  add_significance()
+stat.test
+
+#            group1      group2     n1    n2 statistic    df       p p.signif
+#  <chr>         <chr>       <chr>   <int> <int>     <dbl> <dbl>   <dbl> <chr>   
+#1 Lactobacillus Rs_diseased Phages…     7    48     -3.57  48.0 8.24e-4 ***   
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Muribaculaceae ~ category2) %>%
+  add_significance()
+stat.test
+
+#            group1      group2    n1    n2 statistic    df       p p.signif
+#  <chr>          <chr>       <chr>  <int> <int>     <dbl> <dbl>   <dbl> <chr>   
+#1 Muribaculaceae Rs_diseased Phage…     7    48     -3.84  47.0 3.65e-4 ***      
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Sphingomonas ~ category2) %>%
+  add_significance()
+stat.test
+
+#           group1      group2      n1    n2 statistic    df       p p.signif
+#  <chr>        <chr>       <chr>    <int> <int>     <dbl> <dbl>   <dbl> <chr>   
+#1 Sphingomonas Rs_diseased Phages_…     7    48     -4.55  47.1 3.75e-5 ****    
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Rhodanobacter ~ category2,detailed = TRUE) %>%
+  add_significance()
+stat.test
+
+#  .y.           group1      group2      n1    n2 statistic    df      p p.signif
+#  <chr>         <chr>       <chr>    <int> <int>     <dbl> <dbl>  <dbl> <chr>   
+#1 Rhodanobacter Rs_diseased Phages_…     7    48     -2.48  25.5 0.0202 *       
+ 
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Ralstonia ~ category2) %>%
+  add_significance()
+stat.test
+
+#         group1      group2          n1    n2 statistic    df      p p.signif
+#  <chr>     <chr>       <chr>        <int> <int>     <dbl> <dbl>  <dbl> <chr>   
+#1 Ralstonia Rs_diseased Phages_dise…     7    48      2.40  6.92 0.0475 *       
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Pseudomonas ~ category2) %>%
+  add_significance()
+stat.test
+
+#  .y.         group1      group2         n1    n2 statistic    df     p p.signif
+#  <chr>       <chr>       <chr>       <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Pseudomonas Rs_diseased Phages_dis…     7    48     0.376  9.06 0.716 ns      
+
+
+##################T.TESTs comparing phage healthy vs bacteria-only healthy
+table_top_2=table_top4%>%filter(category2=="Rs_healthy" | category2=="Phages_healthy")
+table_top_2$category2=factor(table_top_2$category2,levels=c("Rs_healthy","Phages_healthy"))
+stat.test <- table_top_2 %>% 
+  t_test(Burkholderia.Caballeronia.Paraburkholderia ~ category2) %>%
+  add_significance()
+stat.test
+
+#             group1 group2    n1    n2 statistic    df     p p.signif
+#  <chr>                 <chr>  <chr>  <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Burkholderia.Caballe… Rs_he… Phage…     5    70      1.02  4.42 0.362 ns      
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Gemmatimonas ~ category2) %>%
+  add_significance()
+stat.test
+
+#   .y.          group1     group2         n1    n2 statistic    df     p p.signif
+#  <chr>        <chr>      <chr>       <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Gemmatimonas Rs_healthy Phages_hea…     5    70     0.182  11.1 0.859 ns      
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Lactobacillus ~ category2) %>%
+  add_significance()
+stat.test
+
+#             group1     group2      n1    n2 statistic    df       p p.signif
+#  <chr>         <chr>      <chr>    <int> <int>     <dbl> <dbl>   <dbl> <chr>   
+#1 Lactobacillus Rs_healthy Phages_…     5    70     -3.52  69.1 7.81e-4 ***    
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Muribaculaceae ~ category2) %>%
+  add_significance()
+stat.test
+
+#   .y.            group1     group2     n1    n2 statistic    df       p p.signif
+#  <chr>          <chr>      <chr>   <int> <int>     <dbl> <dbl>   <dbl> <chr>   
+#1 Muribaculaceae Rs_healthy Phages…     5    70     -5.29  69.4 1.36e-6 ****      
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Sphingomonas ~ category2) %>%
+  add_significance()
+stat.test
+#          group1     group2       n1    n2 statistic    df       p p.signif
+#  <chr>        <chr>      <chr>     <int> <int>     <dbl> <dbl>   <dbl> <chr>   
+#1 Sphingomonas Rs_healthy Phages_h…     5    70     -6.33  69.4 2.13e-8 ****  
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Rhodanobacter ~ category2) %>%
+  add_significance()
+stat.test
+
+#   .y.           group1     group2        n1    n2 statistic    df     p p.signif
+#  <chr>         <chr>      <chr>      <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Rhodanobacter Rs_healthy Phages_he…     5    70     -1.73  8.30 0.121 ns     
+#########
+stat.test <- table_top_2 %>% 
+  t_test(Ralstonia ~ category2) %>%
+  add_significance()
+stat.test
+
+#        group1     group2            n1    n2 statistic    df     p p.signif
+#  <chr>     <chr>      <chr>          <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Ralstonia Rs_healthy Phages_healthy     5    70      1.35  5.01 0.234 ns       
+#########
+stat.test <- table_top_2 %>% 
+  rstatix::t_test(Pseudomonas ~ category2) %>%
+  add_significance()
+stat.test
+
+#         group1     group2         n1    n2 statistic    df      p p.signif
+#  <chr>       <chr>      <chr>       <int> <int>     <dbl> <dbl>  <dbl> <chr>   
+#1 Pseudomonas Rs_healthy Phages_hea…     5    70     -1.96  14.4 0.0692 ns     
+
+
+##########
+#7. Plot Ralstonia counts and the rest of the RF taxa - relatedness phages
+##########
+groups=read.table("groups_no_49.txt",header=T,sep="\t") ####for each plant sample specify the group
+table_top4=read.table("RF_topall_samples_final_8.txt",sep="\t", header=T)
+table_top4=table_top4[,c(1,12:19)]
+
+table_top4=left_join(table_top4,groups)
+table_top4$Burkholderia.Caballeronia.Paraburkholderia=as.numeric(table_top4$Burkholderia.Caballeronia.Paraburkholderia)
+table_top4$Gemmatimonas=as.numeric(table_top4$Gemmatimonas)
+table_top4$Lactobacillus=as.numeric(table_top4$Lactobacillus)
+table_top4$Muribaculaceae=as.numeric(table_top4$Muribaculaceae)
+table_top4$Pseudomonas=as.numeric(table_top4$Pseudomonas)
+table_top4$Sphingomonas=as.numeric(table_top4$Sphingomonas)
+table_top4$Muribaculaceae=as.numeric(table_top4$Muribaculaceae)
+table_top4$Rhodanobacter=as.numeric(table_top4$Rhodanobacter)
+table_top4$Ralstonia=as.numeric(table_top4$Ralstonia)
+table_top4$Related=sub(0,"Individual",table_top4$Related)
+table_top4$Related=sub("Related","Similar_phage_combination",table_top4$Related)
+table_top4$Related=sub("Unrelated","Dissimilar_phage_combination",table_top4$Related)
+table_top4$Related=factor(table_top4$Related,levels=c("Individual","Similar_phage_combination","Dissimilar_phage_combination"))
+
+color_table <-  tibble(
+  Group_Name = c("Individual","Similar_phage_combination","Dissimilar_phage_combination"),
+  Color = c("#DDCC77","#999933","#117733")  )
+
+
+###Burkholderia.Caballeronia.Paraburkholderia
+
+model  <- lm(Burkholderia.Caballeronia.Paraburkholderia ~ Related, data = table_top4)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- na.omit(table_top4) %>% kruskal_test(Burkholderia.Caballeronia.Paraburkholderia ~ Related)
+res.kruskal
+
+
+#  Burkholderia.Caballeronia.Paraburkholderia   130      1.89     2 0.388 Kruskal-Wallis
+
+library(FSA)
+pwc2 <- dunnTest(Burkholderia.Caballeronia.Paraburkholderia ~ Related, data=na.omit(table_top4), method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"Related" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Burkholderia.Caballeronia.Paraburkholderia))
+ylim2=1.2*(max(table_top4$Burkholderia.Caballeronia.Paraburkholderia))
+tiff("Burkholderia.Caballeronia.Paraburkholderia_category_stats_relatedness.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=na.omit(table_top4), x = "Related", y = "Burkholderia.Caballeronia.Paraburkholderia",
+  fill = "Related")+theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = Related), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Counts")+
+  ggtitle("Burkholderia")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+###Gemmatimonas
+
+model  <- lm(Gemmatimonas ~ Related, data = na.omit(table_top4))
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- na.omit(table_top4) %>% kruskal_test(Gemmatimonas ~ Related)
+res.kruskal
+
+### Gemmatimonas   130      12.0     2 0.00246 Kruskal-Wallis
+
+library(FSA)
+pwc2 <- dunnTest(Gemmatimonas ~ Related,data=na.omit(table_top4),method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"Related" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Gemmatimonas))
+ylim2=1.2*(max(table_top4$Gemmatimonas))
+tiff("Gemmatimonas_category_stats_relatedness.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=na.omit(table_top4), x = "Related", y = "Gemmatimonas",
+  fill = "Related")+theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = Related), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Counts")+
+  ggtitle("Gemmatimonas")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+###Lactobacillus
+
+model  <- lm(Lactobacillus ~ Related, data = na.omit(table_top4))
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- na.omit(table_top4) %>% kruskal_test(Lactobacillus ~ Related)
+res.kruskal
+
+####  Lactobacillus   130      3.77     2 0.152 Kruskal-Wallis
+
+library(FSA)
+pwc2 <- dunnTest(Lactobacillus ~ Related,data=na.omit(table_top4),method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"Related" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Lactobacillus))
+ylim2=1.2*(max(table_top4$Lactobacillus))
+tiff("Lactobacillus_Related_stats_relatedness.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=na.omit(table_top4), x = "Related", y = "Lactobacillus",
+  fill = "Related")+theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = Related), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Counts")+
+  ggtitle("Lactobacillus")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+###Muribaculaceae
+
+model  <- lm(Muribaculaceae ~ Related, data = na.omit(table_top4))
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- na.omit(table_top4) %>% kruskal_test(Muribaculaceae ~ Related)
+res.kruskal
+
+#####  Muribaculaceae   130      41.4     2 0.00000000104 Kruskal-Wallis
+
+library(FSA)
+pwc2 <- dunnTest(Muribaculaceae ~ Related,data=na.omit(table_top4),method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"Related" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Muribaculaceae))
+ylim2=1.2*(max(table_top4$Muribaculaceae))
+tiff("Muribaculaceae_category_stats_relatedness.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=na.omit(table_top4), x = "Related", y = "Muribaculaceae",
+  fill = "Related")+theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = Related), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Counts")+
+  ggtitle("Muribaculaceae")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+###Sphingomonas
+
+model  <- lm(Sphingomonas ~ Related, data = na.omit(table_top4))
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- na.omit(table_top4) %>% kruskal_test(Sphingomonas ~ Related)
+res.kruskal
+
+#####   Sphingomonas   130      9.73     2 0.00772 Kruskal-Wallis
+
+pwc2 <- dunnTest(Sphingomonas ~ Related,data=na.omit(table_top4),method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"Related" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Sphingomonas))
+ylim2=1.2*(max(table_top4$Sphingomonas))
+tiff("Sphingomonas_Related_stats_relatedness.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=na.omit(table_top4), x = "Related", y = "Sphingomonas",
+  fill = "Related")+ theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = Related), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=6.8,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Counts")+
+  ggtitle("Sphingomonas")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+###Rhodanobacter
+
+model  <- lm(Rhodanobacter ~ Related, data = na.omit(table_top4))
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- na.omit(table_top4) %>% kruskal_test(Rhodanobacter ~ Related)
+res.kruskal
+
+#####   Rhodanobacter   130      5.25     2 0.0724 Kruskal-Wallis
+
+pwc2 <- dunnTest(Rhodanobacter ~ Related,data=na.omit(table_top4),method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"Related" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Rhodanobacter))
+ylim2=1.2*(max(table_top4$Rhodanobacter))
+tiff("Rhodanobacter_Related_stats_relatedness.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=na.omit(table_top4), x = "Related", y = "Rhodanobacter",
+  fill = "Related")+ theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = Related), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Counts")+
+  ggtitle("Rhodanobacter")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+###Ralstonia
+
+model  <- lm(Ralstonia ~ Related, data = na.omit(table_top4))
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- na.omit(table_top4) %>% kruskal_test(Ralstonia ~ Related)
+res.kruskal
+
+#####    Ralstonia   130      3.15     2 0.207 Kruskal-Wallis
+
+pwc2 <- dunnTest(Ralstonia ~ Related,data=na.omit(table_top4),method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"Related" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Ralstonia))
+ylim2=1.2*(max(table_top4$Ralstonia))
+tiff("Ralstonia_Related_stats_relatedness.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=na.omit(table_top4), x = "Related", y = "Ralstonia",
+  fill = "Related")+ theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = Related), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Counts")+
+  ggtitle("Ralstonia")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+###Pseudomonas
+
+model  <- lm(Pseudomonas ~ Related, data = na.omit(table_top4))
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- na.omit(table_top4) %>% kruskal_test(Pseudomonas ~ Related)
+res.kruskal
+
+# Pseudomonas   130      5.72     2 0.0574 Kruskal-Wallis
+
+
+pwc2 <- dunnTest(Pseudomonas ~ Related,data=na.omit(table_top4),method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"Related" # change the name of grouping factor according to the dataset (df)
+cld
+ylim1=1.5*(max(table_top4$Pseudomonas))
+ylim2=1.2*(max(table_top4$Pseudomonas))
+tiff("Pseudomonas_Related_stats_relatedness.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=na.omit(table_top4), x = "Related", y = "Pseudomonas",
+  fill = "Related")+ theme_bw() +ylim(0,ylim1) +
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = Related), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Counts")+
+  ggtitle("Pseudomonas")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+
+##################T.TESTs comparing groups cocktails similar and dissimilar
+table_top_2=table_top4%>%filter(Related=="Similar_phage_combination" | Related=="Dissimilar_phage_combination")
+table_top_2$Related=factor(table_top_2$Related,levels=c("Similar_phage_combination","Dissimilar_phage_combination"))
+stat.test <- table_top_2 %>% 
+  t_test(Burkholderia.Caballeronia.Paraburkholderia ~ Related) %>%
+  add_significance()
+stat.test
+
+#statistic    df     p p.signif
+#  <chr>                 <chr>  <chr>  <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Burkholderia.Caballe… Simil… Dissi…    12    59     -1.10  13.2  0.29 ns      
+
+########
+stat.test <- table_top_2 %>% 
+  t_test(Gemmatimonas ~ Related) %>%
+  add_significance()
+stat.test
+
+# n1    n2 statistic    df     p p.signif
+#  <chr>        <chr>           <chr>  <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Gemmatimonas Similar_phage_… Dissi…    12    59     -2.75  16.2 0.014 *      
+########
+stat.test <- table_top_2 %>% 
+  t_test(Lactobacillus ~ Related) %>%
+  add_significance()
+stat.test
+
+# n1    n2 statistic    df     p p.signif
+#  <chr>         <chr>          <chr>  <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Lactobacillus Similar_phage… Dissi…    12    59      1.65  11.7 0.126 ns   
+########
+stat.test <- table_top_2 %>% 
+  t_test(Muribaculaceae ~ Related) %>%
+  add_significance()
+stat.test
+
+# n1    n2 statistic    df     p p.signif
+#  <chr>          <chr>         <chr>  <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Muribaculaceae Similar_phag… Dissi…    12    59     0.452  46.5 0.653 ns       
+########
+stat.test <- table_top_2 %>% 
+  t_test(Sphingomonas ~ Related) %>%
+  add_significance()
+stat.test
+
+# .y.          group1          group2    n1    n2 statistic    df     p p.signif
+#  <chr>        <chr>           <chr>  <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Sphingomonas Similar_phage_… Dissi…    12    59      1.54  13.0 0.147 ns      
+########
+stat.test <- table_top_2 %>% 
+  t_test(Rhodanobacter ~ Related) %>%
+  add_significance()
+stat.test
+
+# .y.           group1        group2    n1    n2 statistic    df      p p.signif
+#  <chr>         <chr>         <chr>  <int> <int>     <dbl> <dbl>  <dbl> <chr>   
+#1 Rhodanobacter Similar_phag… Dissi…    12    59     -1.82  15.8 0.0881 ns      
+########
+stat.test <- table_top_2 %>% 
+  t_test(Ralstonia ~ Related) %>%
+  add_significance()
+stat.test
+
+# n1    n2 statistic    df     p p.signif
+#  <chr>     <chr>              <chr>  <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Ralstonia Similar_phage_com… Dissi…    12    59     -1.24  20.3  0.23 ns       
+########
+stat.test <- table_top_2 %>% 
+  t_test(Pseudomonas ~ Related) %>%
+  add_significance()
+stat.test
+
+# n1    n2 statistic    df     p p.signif
+#  <chr>       <chr>            <chr>  <int> <int>     <dbl> <dbl> <dbl> <chr>   
+#1 Pseudomonas Similar_phage_c… Dissi…    12    59     0.642  14.6 0.531 ns     
