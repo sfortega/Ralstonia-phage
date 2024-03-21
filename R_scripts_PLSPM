@@ -1,0 +1,258 @@
+###############
+1. PLSM-PM model to combine microbiome, phage and disease info, create files
+###############
+
+library(FSA)
+library(rcompanion)
+library(ggpubr)
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(tidyverse)
+library(Rmisc)
+#library(grafify)
+library(flux)
+library(car)
+disease=read.table("Disease_index.txt", header=T, sep="\t") ###load all files, including Disease, microbiome composition, phage abundance in PFU/ml, the abudance of the taxa identified by the random forest and the Area under the diseased curve of the plants in the glasshouse
+taxa=read.table("taxa_absolute.txt", header=T, sep="\t")
+phage=read.table("phage_concentration.txt", header=T, sep="\t")
+RF=read.table("only_RF_taxa.txt", header=T, sep="\t")
+AUC=read.table("AUC.txt", header=T, sep="\t")
+
+load(file = "phyloseq.RData") ####obtained from the script of the soil microbiome composition
+###### as in previous script get PcoA and use it to assess first PcoA components
+library(vegan)
+library(tidyverse)
+library(phyloseq)
+
+data_phylo_filt = filter_taxa(physeq, function(x) sum(x > 2) > (0.11 * length(x)), TRUE) 
+set.seed(2747) # set seed for analysis reproducibility
+OTU_filt_rar = rarefy_even_depth(otu_table(data_phylo_filt), rngseed = TRUE, replace = T) # rarefy the raw data using Phyloseq package
+data_otu_filt_rar = data.frame(otu_table(OTU_filt_rar)) # create a separated file
+data_phylo_filt_rar <- phyloseq(OTU_filt_rar, TAX, MD) 
+
+dist_bc <- as.matrix(vegdist(data_otu_filt_rar, method = "bray")) 
+
+# a peek at the first five rows / columns
+dist_bc[1:5, 1:5]
+pcoa_bc = ordinate(data_phylo_filt_rar, "PCoA", "bray") 
+as.data.frame(pcoa_bc$vectors[,c(1,2,3)])-> pcoa_axis
+
+pcoa_axis$SampleName<-rownames(pcoa_axis)
+
+
+####now pull all together for each sample
+disease=left_join(disease, AUC,by=c("SampleName"="Sample_Name"))
+disease_axis=left_join(disease,pcoa_axis, by=c("SampleName"="SampleName"))
+disease_axis_phage=left_join(disease_axis,phage, by=c("SampleName"="Sample"))
+write.table(disease_axis_phage, "Combined_disease_PCOa_three_axis_phage.txt", col.names=T,sep="\t")
+
+
+disease_RF=left_join(disease,RF, by=c("SampleName"="SampleName"))
+disease_RF_phage=left_join(disease_axis,phage, by=c("SampleName"="Sample"))
+write.table(disease_RF_phage, "Combined_disease_RF_taxa_phage.txt", col.names=T,sep="\t")
+
+disease_axis_phage_RF=left_join(disease_axis_phage,RF, by=c("SampleName"="SampleName"))
+write.table(disease_axis_phage_RF, "Combined_disease_PCOa_three_axis_phage_RF.txt", col.names=T,sep="\t")
+
+
+###############
+2. PLSPM (Partial Least Squares Path Modeling) model with PcoA data -- create a model to understand the interaction between phages - microbiome - R. solanacearum - disease development
+###############
+
+###########Create Plspm model using PcoA info
+library(plspm)
+Phages<-c(0,0,0,0)
+other_bacteria<-c(0,0,0,0)
+Ralstonia<-c(1,1,0,0)
+Diseaseindex<-c(1,1,1,0)
+
+foot_path <- rbind(Phages,other_bacteria,Ralstonia,Diseaseindex)
+colnames(foot_path) <- rownames(foot_path)
+foot_path
+innerplot(foot_path)
+
+#####create in excel adding info to the phages
+model_input=read.table("to_input_in_model.txt", header=T, sep="\t",row.names=1)
+
+
+foot_blocks <- list(5:6,8:9,18,20:21)
+foot_modes <- c("A","A", "A","A")
+model_input$Number=sub("Individual",1,model_input$Number)
+model_input$Number=sub("Double",2,model_input$Number)
+model_input$Number=sub("Ralstonia",0,model_input$Number)
+model_input$Number=as.numeric(model_input$Number)
+
+model_input$Related=sub("Related",1,model_input$Related)
+model_input$Related=sub("Unrelated",2,model_input$Related)
+model_input$Related =as.numeric(model_input$Related)
+
+model_input$Ralstonia=as.numeric(model_input$Ralstonia)
+model_input$Pseudomonas=as.numeric(model_input$Pseudomonas)
+model_input$Lactobacillus=as.numeric(model_input$Lactobacillus)
+model_input$Burkholderia_Caballeronia_Paraburkholderia=as.numeric(model_input$Burkholderia_Caballeronia_Paraburkholderia)
+model_input$Sphingomonas=as.numeric(model_input$Sphingomonas)
+model_input$Muribaculaceae=as.numeric(model_input$Muribaculaceae)
+model_input$Gemmatimonas=as.numeric(model_input$Gemmatimonas)
+model_input$Rhodanobacter=as.numeric(model_input$Rhodanobacter)
+model_input$Diseaseindex=as.numeric(model_input$Diseaseindex)
+model_input$AUC=as.numeric(model_input$AUC)
+foot_pls <- plspm(Data = model_input, path_matrix = foot_path, blocks = foot_blocks, modes = foot_modes)
+
+
+#####Results are included for each category of the foot_pls list 
+foot_pls$gof ### goodness-of-fit
+#[1]  0.7031931
+
+foot_pls$effects ###total effects
+#                   relationships     direct    indirect      total
+#1       Phages -> other_bacteria  0.0000000  0.00000000  0.0000000
+#2            Phages -> Ralstonia -0.1798797  0.00000000 -0.1798797
+#3         Phages -> Diseaseindex -0.1335459 -0.07627308 -0.2098190
+#4    other_bacteria -> Ralstonia -0.8977936  0.00000000 -0.8977936
+#5 other_bacteria -> Diseaseindex -0.2960968 -0.38068499 -0.6767818
+#6      Ralstonia -> Diseaseindex  0.4240228  0.00000000  0.4240228
+
+
+foot_pls$crossloadings ## cross-loadings
+#          name          block      Phages other_bacteria    Ralstonia Diseaseindex
+#1 binary_phage         Phages  0.93957960     -0.2177748  0.008618194  -0.05239553
+#2      Related         Phages  0.97756990     -0.2738508  0.081021357  -0.01815134
+#3       Axis.1 other_bacteria -0.29022718      0.4286169 -0.306315755  -0.11586834
+#4       Axis.2 other_bacteria -0.20268142      0.9663254 -0.838589568  -0.64373885
+#5    Ralstonia      Ralstonia  0.05549119     -0.8506353  1.000000000   0.66848257
+#6          AUC   Diseaseindex -0.09482659     -0.6183905  0.680921896   0.97649094
+#7 Diseaseindex   Diseaseindex  0.04515439     -0.5866937  0.611324525   0.96542764
+ 
+
+foot_pls$inner_summary ###summary inner model
+#                     Type        R2 Block_Communality Mean_Redundancy       AVE
+#Phages          Exogenous 0.0000000         0.9192264       0.0000000 0.9192264
+#other_bacteria  Exogenous 0.0000000         0.5587486       0.0000000 0.5587486
+#Ralstonia      Endogenous 0.7537132         1.0000000       0.7537132 1.0000000
+#Diseaseindex   Endogenous 0.4718828         0.9427925       0.4448876 0.9427925
+
+
+foot_pls$unidim ### unidimensionality
+
+#               Mode MVs   C.alpha    DG.rho  eig.1st   eig.2nd
+#Phages            A   2 0.9168147 0.9600682 1.846406 0.1535939
+#other_bacteria    A   2 0.3075164 0.7428086 1.181695 0.8183046
+#Ralstonia         A   1 1.0000000 1.0000000 1.000000 0.0000000
+#Diseaseindex      A   2 0.9398590 0.9708073 1.886541 0.1134585
+
+foot_pls$inner_model
+ $Ralstonia
+                    Estimate Std. Error       t value     Pr(>|t|)
+Intercept       4.467049e-18 0.04403710  1.014383e-16 1.000000e+00
+Phages         -1.798797e-01 0.04563322 -3.941858e+00 1.327941e-04
+other_bacteria -8.977936e-01 0.04563322 -1.967412e+01 2.245239e-40
+
+$Diseaseindex
+                    Estimate Std. Error       t value    Pr(>|t|)
+Intercept      -1.382336e-16 0.06474107 -2.135176e-15 1.000000000
+Phages         -1.335459e-01 0.07107324 -1.878990e+00 0.062556193
+other_bacteria -2.960968e-01 0.13497460 -2.193722e+00 0.030089983
+Ralstonia       4.240228e-01 0.13045458  3.250348e+00 0.001478482
+
+###############
+3. PLSM-PM model with abudance of the taxa identified by the Random Forest (Ralstonia, Gemmatimonas, Muribaculaceae,Sphingomonas, Pseudomonas, Rhodanobacter, Lactobacillus, Burkholderia_Caballeronia_Paraburkholderia, the model is created as above and the same results are reported
+###############
+
+###########Create Plspm model using RF taxa
+Phages<-c(0,0,0,0)
+other_bacteria<-c(0,0,0,0)
+Ralstonia<-c(1,1,0,0)
+Diseaseindex<-c(1,1,1,0)
+
+foot_path <- rbind(Phages,other_bacteria,Ralstonia,Diseaseindex)
+colnames(foot_path) <- rownames(foot_path)
+foot_path
+innerplot(foot_path)
+
+model_input=read.table("to_input_in_model.txt", header=T, sep="\t",row.names=1)
+
+
+foot_blocks <- list(5:6,11:17,18,20:21)
+foot_modes <- c("A","A", "A","A")
+model_input$Number=sub("Individual",1,model_input$Number)
+model_input$Number=sub("Double",2,model_input$Number)
+model_input$Number=sub("Ralstonia",0,model_input$Number)
+model_input$Number=as.numeric(model_input$Number)
+
+model_input$Related=sub("Related",1,model_input$Related)
+model_input$Related=sub("Unrelated",2,model_input$Related)
+model_input$Related =as.numeric(model_input$Related)
+
+model_input$Ralstonia=as.numeric(model_input$Ralstonia)
+model_input$Pseudomonas=as.numeric(model_input$Pseudomonas)
+model_input$Lactobacillus=as.numeric(model_input$Lactobacillus)
+model_input$Burkholderia_Caballeronia_Paraburkholderia=as.numeric(model_input$Burkholderia_Caballeronia_Paraburkholderia)
+model_input$Sphingomonas=as.numeric(model_input$Sphingomonas)
+model_input$Muribaculaceae=as.numeric(model_input$Muribaculaceae)
+model_input$Gemmatimonas=as.numeric(model_input$Gemmatimonas)
+model_input$Rhodanobacter=as.numeric(model_input$Rhodanobacter)
+model_input$Diseaseindex=as.numeric(model_input$Diseaseindex)
+model_input$AUC=as.numeric(model_input$AUC)
+foot_pls <- plspm(Data = model_input, path_matrix = foot_path, blocks = foot_blocks, modes = foot_modes)
+
+foot_pls$gof
+#[1] 0.4330806
+
+
+foot_pls$effects
+#                   relationships      direct   indirect       total
+#1       Phages -> other_bacteria  0.00000000  0.0000000  0.00000000
+#2            Phages -> Ralstonia -0.09406307  0.0000000 -0.09406307
+#3         Phages -> Diseaseindex -0.06518551 -0.0638119 -0.12899741
+#4    other_bacteria -> Ralstonia  0.44142503  0.0000000  0.44142503
+#5 other_bacteria -> Diseaseindex -0.01508632  0.2994605  0.28437417
+#6      Ralstonia -> Diseaseindex  0.67839491  0.0000000  0.67839491
+ 
+
+
+foot_pls$crossloadings
+#                                         name          block      Phages other_bacteria    Ralstonia Diseaseindex
+#1                                binary_phage         Phages  0.93966686      0.2720549  0.008618194  -0.05266241
+#2                                     Related         Phages  0.97751616      0.3596076  0.081021357  -0.01840160
+#3  Burkholderia_Caballeronia_Paraburkholderia other_bacteria  0.02104586      0.5023527  0.071274224  -0.14375507
+#4                                Gemmatimonas other_bacteria  0.25278170      0.6136180  0.036456042  -0.06047421
+#5                               Lactobacillus other_bacteria -0.20682777     -0.6486425 -0.251266999  -0.11531133
+#6                              Muribaculaceae other_bacteria  0.26843990      0.2604693  0.005365917   0.06769343
+#7                                 Pseudomonas other_bacteria -0.20307199     -0.8395316 -0.324328093  -0.20610243
+#8                               Rhodanobacter other_bacteria  0.16166638      0.5663439  0.041889168  -0.11773759
+#9                                Sphingomonas other_bacteria -0.33338178     -0.8409263 -0.330930227  -0.13599169
+#10                                  Ralstonia      Ralstonia  0.05545878      0.4095635  1.000000000   0.66860099
+#11                                        AUC   Diseaseindex -0.09484549      0.2197798  0.680921896   0.97668644
+#12                               Diseaseindex   Diseaseindex  0.04514214      0.2509286  0.611324525   0.96519035
+
+foot_pls$inner_summary
+#                     Type        R2 Block_Communality Mean_Redundancy       AVE
+#Phages          Exogenous 0.0000000         0.9192558       0.0000000 0.9192558
+#other_bacteria  Exogenous 0.0000000         0.4071689       0.0000000 0.4071689
+#Ralstonia      Endogenous 0.1755750         1.0000000       0.1755750 1.0000000
+#Diseaseindex   Endogenous 0.4520743         0.9427544       0.4261951 0.9427544
+ 
+
+
+foot_pls$unidim
+
+#               Mode MVs   C.alpha     DG.rho  eig.1st   eig.2nd
+#Phages            A   2 0.9168147 0.96006820 1.846406 0.1535939
+#other_bacteria    A   7 0.0000000 0.05770228 3.788058 1.1773841
+#Ralstonia         A   1 1.0000000 1.00000000 1.000000 0.0000000
+#Diseaseindex      A   2 0.9398590 0.97080733 1.886541 0.1134585
+
+foot_pls$inner_model
+#$Ralstonia
+#                    Estimate Std. Error       t value     Pr(>|t|)
+#Intercept       5.019496e-17 0.08057007  6.229977e-16 1.000000e+00
+#Phages         -9.406307e-02 0.08563219 -1.098455e+00 2.740842e-01
+#other_bacteria  4.414250e-01 0.08563219  5.154896e+00 9.458793e-07
+
+#$Diseaseindex
+#                    Estimate Std. Error       t value     Pr(>|t|)
+#Intercept       2.914294e-16 0.06594404  4.419344e-15 1.000000e+00
+#Phages         -6.518551e-02 0.07041938 -9.256757e-01 3.563841e-01
+#other_bacteria -1.508632e-02 0.07707160 -1.957443e-01 8.451257e-01
+#Ralstonia       6.783949e-01 0.07262731  9.340769e+00 4.400723e-16
