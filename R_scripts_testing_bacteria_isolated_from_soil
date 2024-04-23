@@ -1,5 +1,5 @@
 ############
-1. Bacteria from soil vs Ralstonia in vitro - plot the OD over time and calculate the area under the growth curve and do stats comparing groups
+##1. Bacteria from soil vs Ralstonia in vitro - plot the OD over time and calculate the area under the growth curve and do stats comparing groups
 ############
 library(readxl)    
 read_excel_allsheets <- function(filename, tibble = FALSE) {
@@ -236,7 +236,7 @@ dev.off()
 
 
 ############
-2. Bacteria from soil vs Ralstonia in vitro GFP - as above but using the GFP measurements of the Rs-GFP tagged strain
+##2. Bacteria from soil vs Ralstonia in vitro GFP - as above but using the GFP measurements of the Rs-GFP tagged strain
 ############
 
 library(Growthcurver)
@@ -474,7 +474,7 @@ dev.off()
 
 
 ############
-3.Bacteria from soil vs Rasltonia in planta - comparing the disease score of tomato plants inoculated with bacteria and Ralstonia 
+##3.Bacteria from soil vs Rasltonia in planta - comparing the disease score of tomato plants inoculated with bacteria and Ralstonia 
 ############
 data <- read.table("scores_PGPR.txt", header = T, sep = '\t') ###Table containing the disease scores of the experiment 
 
@@ -499,7 +499,7 @@ dev.off()
 
 
 ############
-4.B12 PGPR in tomatoes - checking differences in dry and wet weight in tomatoes inoculated with B12
+##4.B12 PGPR in tomatoes - checking differences in dry and wet weight in tomatoes inoculated with B12
 ############
 
 library(FSA)
