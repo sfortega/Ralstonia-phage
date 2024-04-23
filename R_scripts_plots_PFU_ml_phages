@@ -1,10 +1,10 @@
 #################
-1. Ralstonia counts PFU plots 
+##1. Ralstonia counts PFU plots 
 #################
 #####USE FROM THE the soil microbiome composition script
 
 #################
-2.Phages log PFU plots - plot the PFU/ml of the phages recover from soil at the end of the experiment
+##2.Phages log PFU plots - plot the PFU/ml of the phages recover from soil at the end of the experiment
 #################
 
 library(tidyverse)
@@ -64,7 +64,7 @@ dev.off()
 
 
 #################
-3.Phages log PFU and log Ralstonia counts correlation 
+##3.Phages log PFU and log Ralstonia counts correlation 
 #################
 
 library(ggpmisc)
