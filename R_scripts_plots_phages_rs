@@ -1,0 +1,560 @@
+#################Figure 1 continuation, do first the microbiome data in ##script microbiome to calculate Ralstonia counts and then these
+#################
+#1.1. Phages log PFU plots according to 12 treatments
+#################
+
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(FSA)
+library(rcompanion)
+
+setwd("..")
+data_genus=read.table("RF_topall_samples_final_genus.txt",sep="\t",header=T) ###after random forest analysis 
+data_genus$Group_Name=sub("BEFORE","Compost",data_genus$Group_Name) ###change names
+data_genus$Group_Name=sub("Ralstonia","Rs.UW551",data_genus$Group_Name)
+data_genus$Group_Name=sub("Control","Negative_control",data_genus$Group_Name)
+
+table=read.table("table_phages_all12_menos2.txt",header=T,sep="\t")
+table=table[,c(1:4)]
+table_data=left_join(data_genus, table, by="SampleName")
+
+write.table(table_data, "table_phages_all12_menos2_Genus.txt",col.names=T,sep="\t")
+table_data->table2
+table2$Phages=factor(table2$Phages,levels=c("Negative_control","1-Phage","2-Phages","Rs.UW551"))
+table2$category3=factor(table2$category3,levels=c("Negative_control","Healthy","Diseased"))
+table2$category_phages=factor(table2$category_phages,levels=c("Negative_control","1-Phage_Healthy","1-Phage_Diseased","2-Phages_Healthy","2-Phages_Diseased","Rs.UW551_Healthy","Rs.UW551_Diseased"))
+table2$Group_Name=factor(table2$Group_Name,levels=c("Negative_control","PYO4","PYO45","PYO59","PYO65","PYO4.PYO45","PYO4.PYO59","PYO4.PYO65","PYO45.PYO59","PYO45.PYO65","PYO59.PYO65","Rs.UW551"))
+
+color_table <-  tibble(
+  Treatment = c("Negative_control","PYO4","PYO45","PYO59","PYO65","PYO4.PYO45","PYO4.PYO59","PYO4.PYO65","PYO45.PYO59","PYO45.PYO65","PYO59.PYO65","Rs.UW551"),
+  Color = c("#777777","#CC6677","#AA4499","#6699CC","#332288","#DDCC77","#117733","#661100","#44AA99", "#0072B2","#D55E00" ,"black"))
+
+
+
+##########Plots of Phage abundance according to the 10 phage treatments and controls
+
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(multcomp)
+library(FSA)
+library(ggpubr)
+library(rcompanion)
+
+
+table2$PFU_ml=table2$PFU_ml+0.001
+table2$log_PFU=log(table2$PFU_ml)
+model  <- lm(log_PFU ~ Group_Name, data =table2)
+shapiro_test(residuals(model)) ####non normally distributed 
+anova=aov(log_PFU ~ Group_Name, data=table2)
+summary(anova)
+#             Df Sum Sq Mean Sq F value Pr(>F)    
+#Group_Name   11   6549   595.3   49.53 <2e-16 ***
+#Residuals   130   1563    12.0 
+
+tukey <-   glht(anova,  linfct = mcp(Group_Name= "Tukey"))
+cld <- cld(tukey)
+cld2<-as.data.frame(cld$mcletters$Letters)
+cld2$Treatment<-rownames(cld2)
+colnames(cld2)=c("Letter","Treatment")
+cld2$Treatment=factor(cld$Treatment, levels=c("Negative_control","PYO4","PYO45","PYO59","PYO65","PYO4.PYO45","PYO4.PYO59","PYO4.PYO65","PYO45.PYO59","PYO45.PYO65","PYO59.PYO65","Rs.UW551"))
+
+ylim1=1.5*(max(table2$log_PFU))
+ylim2=1.2*(max(table2$log_PFU))
+ylim3=1.5*(min(table2$log_PFU))
+tiff("log_PFUml_Group_Name.tiff",res=300,he=200,wi=250,units="mm")
+ ggboxplot(data=table2,, x = "Group_Name", y = "log_PFU",
+  fill = "Group_Name")+ theme_bw() +ylim(ylim3,ylim1)+
+  geom_text(data = cld2, aes(label = cld2$Letter, y =ylim2 , x = Treatment), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=6.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  scale_x_discrete(labels = NULL, breaks = NULL) + ylab("Phage abundance (log(PFU/ml))")+ xlab("Treatments")+
+  theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+#################
+#1.2. Phages log PFU plots according to healthy or diseased plants
+#################
+
+table3=table2[-grep("Rs.UW551", table2$Group_Name),]
+table3$category3=factor(table3$category3, levels=c("Negative_control","Healthy", "Diseased")) ###not considering the 12 plants of Ralstonia only treatment
+model  <- lm(log_PFU ~ category3, data =table3)
+
+shapiro_test(residuals(model)) ####non normally distributed 
+anova=aov(log_PFU ~ category3, data=table3)
+summary(anova)
+#             Df Sum Sq Mean Sq F value Pr(>F)    
+#category3     2   3339    1670   61.84 <2e-16 ***
+#Residuals   127   3429      27                   
+#---
+#Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+tukey <-   glht(anova,  linfct = mcp(category3= "Tukey"))
+cld <- cld(tukey)
+cld2<-as.data.frame(cld$mcletters$Letters)
+cld2$Treatment<-rownames(cld2)
+colnames(cld2)=c("Letter","Treatment")
+cld2$Treatment=factor(cld2$Treatment, levels=c("Negative_control","Healthy", "Diseased"))
+
+ylim1=1.5*(max(table3$log_PFU))
+ylim2=1.2*(max(table3$log_PFU))
+ylim3=1.5*(min(table3$log_PFU))
+
+
+color_table2 <-  tibble(
+  Treatment = c("Negative_control","Healthy", "Diseased"),
+  Color = c("#777777", "#44AA99","black"))
+
+
+tiff("log_PFUml_H_D.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=table3, x = "category3", y = "log_PFU",
+  fill = "category3")+ theme_bw() +ylim(ylim3,ylim1)+
+  geom_text(data = cld2, aes(label = cld2$Letter, y =ylim2 , x = Treatment), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table2$Color)+
+  scale_x_discrete(labels = NULL, breaks = NULL) + ylab("Phage abundance (log(PFU/ml))")+ xlab("Treatments")+
+  theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+#################
+#1.3.Phages log PFU plots considering 1-Phage and 2-Phages phage treatment
+#################
+
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(FSA)
+library(rcompanion)
+
+setwd("R:/rsrch/ah1309/lab/Sara/Ralstonia_project/experiments/FERA experiments/Final3_4th_exp_FERA")
+data_genus=read.table("RF_topall_samples_final_genus.txt",sep="\t",header=T) ###after analysis the RF
+data_genus$Group_Name=sub("BEFORE","Compost",data_genus$Group_Name)
+data_genus$Group_Name=sub("Ralstonia","Rs.UW551",data_genus$Group_Name)
+data_genus$Group_Name=sub("Control","Negative_control",data_genus$Group_Name)
+
+table=read.table("table_phages_all12_menos2.txt",header=T,sep="\t")
+table=table[,c(1:4)]
+table_data=left_join(data_genus, table, by="SampleName")
+
+write.table(table_data, "table_phages_all12_menos2_Genus.txt",col.names=T,sep="\t")
+table_data->table2
+table2$Phages=factor(table2$Phages,levels=c("Negative_control","1-Phage","2-Phages","Rs.UW551"))
+table2$category3=factor(table2$category3,levels=c("Negative_control","Healthy","Diseased"))
+table2$category_phages=factor(table2$category_phages,levels=c("Negative_control","1-Phage_Healthy","1-Phage_Diseased","2-Phages_Healthy","2-Phages_Diseased","Rs.UW551_Healthy","Rs.UW551_Diseased"))
+table2$Group_Name=factor(table2$Group_Name,levels=c("Negative_control","PYO4","PYO45","PYO59","PYO65","PYO4.PYO45","PYO4.PYO59","PYO4.PYO65","PYO45.PYO59","PYO45.PYO65","PYO59.PYO65","Rs.UW551"))
+
+
+color_table <-  tibble(
+  Group_Name = c("Negative_control","1-Phage","2-Phages","Rs.UW551"),
+  Color = c("#666666","#E69F00","#0072B2","#882255")  )
+
+
+
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(multcomp)
+library(FSA)
+library(ggpubr)
+
+
+table2$PFU_ml=table2$PFU_ml+0.001
+table2$log_PFU=log(table2$PFU_ml)
+model  <- lm(log_PFU ~ Phages, data =table2)
+shapiro_test(residuals(model)) ####non normally distributed 
+anova=aov(log_PFU ~ Phages, data=table2)
+summary(anova)
+#             Df Sum Sq Mean Sq F value Pr(>F)    
+#Phages        3   4505  1501.6   60.92 <2e-16 ***
+#Residuals   138   3401    24.6                   
+#---
+#Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+tukey <-   glht(anova,  linfct = mcp(Phages= "Tukey"))
+cld <- cld(tukey)
+cld2<-as.data.frame(cld$mcletters$Letters)
+cld2$Treatment<-rownames(cld2)
+colnames(cld2)=c("Letter","Treatment")
+cld2=as.data.frame(cld2)
+cld2$Treatment=factor(cld$Treatment, levels=c("Negative_control","1-Phage","2-Phages","Rs.UW551"))
+
+ylim1=1.5*(max(table2$log_PFU))
+ylim2=1.2*(max(table2$log_PFU))
+ylim3=1.5*(min(table2$log_PFU))
+tiff("log_PFUml_I_D.tiff",res=300,he=200,wi=250,units="mm")
+ ggboxplot(data=table2, x = "Phages", y = "log_PFU",
+  fill = "Phages")+ theme_bw() +ylim(ylim3,ylim1)+
+  geom_text(data = cld2, aes(label = cld2$Letter, y =ylim2 , x = Treatment), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+ scale_x_discrete(labels = NULL, breaks = NULL)+  ylab("Phage abundance (log(PFU/ml))")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+
+#############T.TEST comparing only 1-Phage OR 2-Phages Phage treatments and not considering Negative control plants
+data5=table2%>%filter(Phages=="1-Phage" | Phages=="2-Phages")
+data5$Phages=factor(data5$Phages,levels=c("1-Phage","2-Phages"))
+data5=data5[,c(11,43)]
+
+data5$log_PFU=as.numeric(data5$log_PFU)
+stat.test <- data5 %>% 
+  rstatix::t_test(log_PFU ~ Phages) %>%
+  add_significance()
+stat.test
+
+# A tibble: 1 × 9
+#  .y.     group1     group2    n1    n2 statistic    df         p p.signif
+#  <chr>   <chr>      <chr>  <int> <int>     <dbl> <dbl>     <dbl> <chr>   
+#1 log_PFU 1-Phage 2-Phages    47    71     -4.30  80.6 0.0000476 ****    
+
+
+
+
+
+#################
+2.1.  Ralstonia counts according to 12 treatments
+#################
+
+model  <- lm(Ralstonia ~ Group_Name, data =table2)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+shapiro_test(residuals(model)) ####non normally distributed 
+res.kruskal <- na.omit(table2) %>% kruskal_test(Ralstonia ~ Group_Name)
+res.kruskal
+
+##  1 Ralstonia   130      29.0    10 0.00125 Kruskal-Wallis
+
+
+pwc2 <- dunnTest(Ralstonia ~ Group_Name,data=table2,method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"Treatment" # change the name of grouping factor according to the dataset (df)
+cld
+cld2$Treatment=factor(cld$Treatment, levels=c("Negative_control","PYO4","PYO45","PYO59","PYO65","PYO4.PYO45","PYO4.PYO59","PYO4.PYO65","PYO45.PYO59","PYO45.PYO65","PYO59.PYO65","Rs.UW551"))
+
+ylabel = substitute(expr = paste(italic(Ralstonia), " abundance (counts)")) 
+                      #env = list(i=i))
+ylim1=1.5*(max(table2$Ralstonia))
+ylim2=1.2*(max(table2$Ralstonia))
+ylim3=1.5*(min(table2$Ralstonia))
+ylabel = substitute(expr = paste("Counts ", italic("Ralstonia")), 
+                      env = list(i=i))
+tiff("Ralstonia_Group_Name.tiff",res=300,he=200,wi=250,units="mm")
+ ggboxplot(data=table2,, x = "Group_Name", y = "Ralstonia",
+  fill = "Group_Name")+ theme_bw() +ylim(ylim3,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y =ylim2 , x = Treatment), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=6.5,
+            check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  scale_x_discrete(labels = NULL, breaks = NULL) +ylab(ylabel)+
+xlab("Treatments")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+#################
+#2.2. Ralstonia plots according to healthy or diseased plants
+#################
+table3=table2[-grep("Rs.UW551", table2$Group_Name),]
+table3$category3=factor(table3$category3, levels=c("Negative_control","Healthy", "Diseased")) ###this one does not consider 12 plant only Ralstonia
+ 
+model  <- lm(Ralstonia ~ category3, data =table3)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+shapiro_test(residuals(model)) ####non normally distributed 
+res.kruskal <- table3 %>% kruskal_test(Ralstonia ~ category3)
+res.kruskal
+#  .y.           n statistic    df        p method        
+#* <chr>     <int>     <dbl> <int>    <dbl> <chr>         
+#1 Ralstonia   130      57.6     2 3.15e-13 Kruskal-Wallis
+
+pwc2 <- dunnTest(Ralstonia ~ category3,data=table3,method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"Treatment" # change the name of grouping factor according to the dataset (df)
+cld
+cld2$Treatment=factor(cld$Treatment, levels=c("Negative_control", "Healthy", "Diseased"))
+
+title=substitute(expr = paste("Abundance ", italic("Ralstonia")))
+ylim1=1.5*(max(table2$Ralstonia))
+ylim2=1.2*(max(table2$Ralstonia))
+ylim3=1.5*(min(table2$Ralstonia))
+ylabel = substitute(expr = paste(italic(Ralstonia), " abundance (counts)")) 
+                      #env = list(i=i))
+
+
+color_table2 <-  tibble(
+  Treatment = c("Negative_control","Healthy", "Diseased"),
+  Color = c("#777777","#44AA99","black"))
+
+tiff("Ralstonia_H_D.tiff",res=300,he=200,wi=200,units="mm")
+ ggboxplot(data=table3, x = "category3", y = "Ralstonia",
+  fill = "category3")+ theme_bw() +ylim(ylim3,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y =ylim2 , x = Treatment), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_fill_manual(values = color_table2$Color)+
+  scale_x_discrete(labels = NULL, breaks = NULL) +ylab(ylabel)+
+xlab("Treatments")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+#################
+#2.3. Ralstonia plots considering 1-Phage and 2-Phages phage treatment
+#################
+table2$Ralstonia=as.numeric(table2$Ralstonia)
+table2$Phages=sub("1-Phage","1.Phage",table2$Phages)
+table2$Phages=sub("2-Phages","2.Phages",table2$Phages)
+
+model  <- lm(Ralstonia ~ Phages, data =table2)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+shapiro_test(residuals(model)) ####non normally distributed 
+res.kruskal <- table2 %>% kruskal_test(Ralstonia ~ Phages)
+res.kruskal
+
+##  Ralstonia   142      30.4     3 0.00000114 Kruskal-Wallis
+
+
+pwc2 <- dunnTest(Ralstonia ~ Phages,data=table2,method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"Phages" # change the name of grouping factor according to the dataset (df)
+cld
+cld$Phages=sub("1.Phage","1-Phage",cld$Phages)
+cld$Phages=sub("2.Phages","2-Phages",cld$Phages)
+
+cld$Phages=factor(cld$Phages, levels=c("Negative_control","1-Phage","2-Phages","Rs.UW551"))
+
+
+color_table <-  tibble(
+  Group_Name = c("Negative_control","1-Phage","2-Phages","Rs.UW551"),
+  Color = c("#666666","#E69F00","#0072B2","#882255")  )
+
+title=substitute(expr = paste("Abundance ", italic("Ralstonia")))
+ylim1=1.5*(max(table2$Ralstonia))
+ylim2=1.2*(max(table2$Ralstonia))
+ylim3=1.5*(min(table2$Ralstonia))
+
+ylabel = substitute(expr = paste(italic(Ralstonia), " abundance (counts)")) 
+                      #env = list(i=i))
+
+table2$Phages=sub("1.Phage","1-Phage",table2$Phages)
+table2$Phages=sub("2.Phages","2-Phages",table2$Phages)
+table2$Phages=factor(table2$Phages,levels=c("Negative_control","1-Phage","2-Phages","Rs.UW551"))
+
+
+tiff("Ralstonia_I_D.tiff",res=300,he=200,wi=250,units="mm")
+ ggboxplot(data=table2,, x = "Phages", y = "Ralstonia",
+  fill = "Phages")+ theme_bw() +ylim(ylim3,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y =ylim2 , x = Phages), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+           check_overlap = F)+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+ scale_x_discrete(labels = NULL, breaks = NULL)+ ylab(ylabel)+
+  theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+
+################## TEST 1-Phage OR 2-Phages FOR Rs abundance
+data5=table2%>%filter(Phages=="1-Phage" | Phages=="2-Phages")
+data5$Phages=factor(data5$Phages,levels=c("1-Phage","2-Phages"))
+data5=data5[,c(11,36)]
+
+data5$Ralstonia=as.numeric(data5$Ralstonia)
+stat.test <- data5 %>% 
+  rstatix::t_test(Ralstonia ~ Phages) %>%
+  add_significance()
+stat.test
+
+# # A tibble: 1 × 9
+#  .y.       group1     group2    n1    n2 statistic    df      p p.signif
+#  <chr>     <chr>      <chr>  <int> <int>     <dbl> <dbl>  <dbl> <chr>   
+#1 Ralstonia 1-Phage 2-Phages    47    71     -2.44  112. 0.0162 *      
+
+
+#################
+#3.1. Phages log PFU and log Ralstonia counts correlation with Area under the diseased curve
+#################
+#################Rs vs Disease and Rs vs AUC and phages vs Disease and Phages vs AUC
+data_AUC=read.table("AUC.txt", sep="\t", header=T)
+data_AUC$replicate=rownames(data_AUC)
+disease=read.table("disease_changed.txt", header=T, sep="\t")
+disease=disease[grep("21", disease$Time_DPI),]
+
+
+disease$replicate=paste(disease$Treatment_decoded,"__",disease$Replicate)
+disease$replicate=sub(" ","",disease$replicate)
+disease$replicate=sub(" ","",disease$replicate)
+data_AUC_2=left_join(data_AUC, disease, by="replicate")
+
+table3=table2[,c(1,14:44)]
+table4=left_join(table3, data_AUC_2, by="SampleName")
+table4$Phages=sub("Control","Negative_control",table4$Phages)
+table4$Phages=sub("1-Phage","Phages",table4$Phages)
+table4$Phages=sub("2-Phages","Phages",table4$Phages)
+table4$category3=sub("Control","Negative_control",table4$category3)
+table4$Phages=sub("Ralstonia_only","Rs.UW551",table4$Phages)
+table4=table4[-grep("Negative_control", table4$Phages),]
+
+
+table4$log_Ralstonia=log(table4$Ralstonia)
+table4$PFU_ml=table4$PFU_ml+0.001
+table4$log_PFU=log(table4$PFU_ml)
+
+
+xlabel = substitute(expr = paste(italic(Ralstonia), " abundance (counts)")) 
+                      #env = list(i=i))
+table4$Phages=factor(table4$Phages, levels=c("Phages","Rs.UW551"))
+color_table <-  tibble(
+  Group_Name = c("Negative_control","1-Phage","2-Phages","Rs.UW551"),
+  Color = c("#666666","#E69F00","#0072B2","#882255")  )
+
+
+
+tiff("correlation_Ralstonia_AUC_phages_no_groups.tiff",res=300,he=200,wi=200,units="mm")
+ggscatter(table4, x = "log_Ralstonia", y = "AUC",          
+ add = "reg.line", conf.int = TRUE, color="Phages",palette=c("#999933","#882255"),shape = "Phages",size =6,           cor.coef = TRUE, cor.coef.size = 0,
+          cor.coeff.args = list(label.y = 40),
+          xlab = c(xlabel), ylab = "Area under the diseased curve")+ 
+  stat_cor(aes(color = factor(Phages)),label.y=c(48, 41, 35), method = "spearman",size = 8)+theme( text = element_text(size =26))+ylim(-25,55)
+dev.off()
+
+
+
+--------------------PHAGES
+data_AUC=read.table("AUC.txt", sep="\t", header=T)
+data_AUC$replicate=rownames(data_AUC)
+disease=read.table("disease_changed.txt", header=T, sep="\t")
+disease=disease[grep("21", disease$Time_DPI),]
+
+
+disease$replicate=paste(disease$Treatment_decoded,"__",disease$Replicate)
+disease$replicate=sub(" ","",disease$replicate)
+disease$replicate=sub(" ","",disease$replicate)
+data_AUC_2=left_join(data_AUC, disease, by="replicate")
+
+table3=table2[,c(1,14:44)]
+table4=left_join(table3, data_AUC_2, by="SampleName")
+table4$Phages=sub("Control","Negative_control",table4$Phages)
+table4$Phages=sub("1-Phage","Phages",table4$Phages)
+table4$Phages=sub("2-Phages","Phages",table4$Phages)
+table4$category3=sub("Control","Negative_control",table4$category3)
+table4$Phages=sub("Ralstonia_only","Rs.UW551",table4$Phages)
+table4=table4[-grep("Negative_control", table4$Phages),]
+table4=table4[-grep("Rs.UW551", table4$Phages),]
+
+
+table4$log_Ralstonia=log(table4$Ralstonia)
+table4$PFU_ml=table4$PFU_ml+0.001
+table4$log_PFU=log(table4$PFU_ml)
+
+
+xlabel=substitute(expr = paste(italic(Ralstonia), " abundance (counts)")) 
+                      #env = list(i=i))
+
+table4$Phages=factor(table4$Phages, levels=c("Phages"))
+color_table <-  tibble(
+  Group_Name = c("Negative_control","1-Phage","2-Phages","Rs.UW551"),
+  Color = c("#666666","#E69F00","#0072B2","#882255")  )
+
+
+
+tiff("correlation_Phages_AUC_phages_no_groups.tiff",res=300,he=200,wi=200,units="mm")
+ggscatter(table4, x = "log_PFU", y = "AUC",          
+ add = "reg.line", conf.int = TRUE, color="Phages",palette=c("#999933"),shape = "Phages",size =6,           cor.coef = TRUE, cor.coef.size = 0,
+          cor.coeff.args = list(label.y = 40),
+          xlab = "Phage abundance (log(PFU/ml))", ylab = "Area under the diseased curve")+ 
+  stat_cor(aes(color = factor(Phages)),label.y=c(48, 45, 35), method = "spearman",size = 8)+theme( text = element_text(size =26))+ylim(-25,55)
+
+dev.off()
+
+
+#################
+#3.2. Phages log PFU and log Ralstonia counts correlation according to healthy or diseased and 2-Phages or 1-Phage
+#################
+library(ggpmisc)
+my.formula <- y ~ x
+
+##########Figure S3 Healthy correlation
+table2
+table3=table2[grep("1-Phage|2-Phages", table2$Phages),]
+table3=table3[grep("Healthy", table3$category3),]
+table3$log_Ralstonia=log(table3$Ralstonia)
+table3$category_phages=factor(table3$category_phages,levels=c("1-Phage_Healthy","1-Phage_Diseased","2-Phages_Healthy","2-Phages_Diseased"))
+##table3$category_phages=as.character(table3$category_phages)
+
+i="Ralstonia"
+
+xlabel = substitute(expr = paste(italic(Ralstonia), " abundance (counts)")) 
+                      #env = list(i=i))
+tiff("correlation_Ralstonia_phages_log_log2_1-Phage_2-Phages_healthy_bigger.tiff",res=300,he=200,wi=200,units="mm")
+ggscatter(table3, x = "log_Ralstonia", y = "log_PFU",          
+ add = "reg.line", conf.int = TRUE, color="category_phages",palette=c("#44AA99","#428879"),shape = "Phages",size =6,           cor.coef = TRUE, cor.coef.size = 0,
+          cor.coeff.args = list(label.y = 30),
+         xlab = c(xlabel), ylab = "Phage abundance (log(PFU/ml))")+facet_wrap(. ~ category3)+ 
+  stat_cor(aes(color = factor(category_phages)),label.y=c(28, 26), method = "spearman",size = 5.8)+theme( text = element_text(size = 26))+ylim(-10,30)
+
+dev.off()
+
+###color="category_phages",palette=c("#777777","#44AA99","black","#428879") can not be a factor or the labels get wrong posiitons
+
+##https://github.com/kassambara/ggpubr/issues/248
+
+##########Figure S3 Diseased correlation
+table2
+table3=table2[grep("1-Phage|2-Phages", table2$Phages),]
+table3=table3[grep("Diseased", table3$category3),]
+table3$log_Ralstonia=log(table3$Ralstonia)
+table3$category_phages=factor(table3$category_phages,levels=c("1-Phage_Healthy","1-Phage_Diseased","2-Phages_Healthy","2-Phages_Diseased"))
+##table3$category_phages=as.character(table3$category_phages)
+
+i="Ralstonia"
+titulo = substitute(expr = atop(paste("Correlation between ", italic(Ralstonia), " and phages abundances"), "in 1-Phage phage treatments and according to disease outcomes"), 
+                      env = list(i=i))
+xlabel=substitute(expr = paste(italic(Ralstonia), " abundance (counts)")) 
+                      #env = list(i=i))
+
+tiff("correlation_Ralstonia_phages_log_log2_1-Phage_2-Phages_diseased_bigger.tiff",res=300,he=200,wi=200,units="mm")
+ggscatter(table3, x = "log_Ralstonia", y = "log_PFU",          
+ add = "reg.line", conf.int = TRUE, color="category_phages",palette=c("#555555","black"),shape = "Phages",size =6,           cor.coef = TRUE, cor.coef.size = 0,
+          cor.coeff.args = list(label.y = 30),
+          xlab = c(xlabel), ylab = "Phage abundance (log(PFU/ml))", title= c(titulo))+facet_wrap(. ~ category3)+ 
+  stat_cor(aes(color = factor(category_phages)),label.y=c(28, 26), method = "spearman",size = 5.8)+theme( text = element_text(size =26))+ylim(-10,30)
+
+dev.off()
+
+
+
+
+
+
