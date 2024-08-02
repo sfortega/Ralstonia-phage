@@ -1,5 +1,5 @@
 ############
-#1. Growth curves -OD600nm - testing Ralstonia solanacearum growth inhibition when growing with phages
+1. Growth curves -OD600nm - testing Ralstonia solanacearum growth inhibition when growing with phages
 ############
 library(readxl)    
 read_excel_allsheets <- function(filename, tibble = FALSE) {
@@ -117,8 +117,7 @@ tiff("curves_3_OD_UW551_phages.tiff",res=300,he=200,wi=200,units="mm")
  ggplot(data = data_summary, aes(x = times, y = value, group = Treatment, col = Treatment))  +
    geom_line(linewidth=2) +
    labs(x = "Time",
-          y = "OD 600nm") +
-  ggtitle("Growth 75h")+
+          y = "Bacterial density (OD 600nm)") +
     theme_bw()+
    theme(panel.grid.major.x = element_blank(),
          panel.grid.minor.x = element_blank(),
@@ -238,7 +237,7 @@ tiff("OD_AUC_UW551_phages_letters.tiff",res=300,he=200,wi=200,units="mm")
             fontface = "bold",
             size=8.0,
             check_overlap = F)+
-  xlab("Treatments")+   ylab("AUC")+scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Area under the growth curve (AUC)")+scale_fill_manual(values = color_table$Color)+
   ggtitle("AUC 75h (OD 600nm)")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
 dev.off()
 
