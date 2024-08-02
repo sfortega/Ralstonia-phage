@@ -1,0 +1,58 @@
+
+###############
+####SYNIMA with Phages
+###############
+
+
+sed '/^>/ s/ .*//'  phages/PY04/PY04.annotation.cds > phages/PY04/PY04.annotation.cds2
+sed '/^>/ s/ .*//' phages/PY04/PY04.annotation.pep > phages/PY04/PY04.annotation.pep2
+sed -e 's/CDS/mRNA/g' phages/PY04/PY04.annotation.gff > phages/PY04/PY04.annotation.gff3
+sed 's/;.*//' phages/PY04/PY04.annotation.gff3 > phages/PY04/PY04.annotation.2.gff3
+
+
+cp phages/PY04/PY04.annotation.cds2 phages/PY04/PY04.annotation.cds
+cp phages/PY04/PY04.annotation.pep2 phages/PY04/PY04.annotation.pep
+cp phages/PY04/PY04.annotation.2.gff3 phages/PY04/PY04.annotation.gff3
+rm phages/PY04/PY04.annotation.gff
+
+sed '/^>/ s/ .*//'  phages/PY045/PY045.annotation.cds > phages/PY045/PY045.annotation.cds
+sed '/^>/ s/ .*//' phages/PY045/PY045.annotation.pep > phages/PY045/PY045.annotation.pep
+cp phages/PY045/PY045.annotation.cds2 phages/PY045/PY045.annotation.cds
+cp phages/PY045/PY045.annotation.pep2 phages/PY045/PY045.annotation.pep
+sed -e 's/CDS/mRNA/g' phages/PY045/PY045.annotation.gff > phages/PY045/PY045.annotation.gff3
+sed 's/;.*//' phages/PY045/PY045.annotation.gff3 > phages/PY045/PY045.annotation.2.gff3
+cp phages/PY045/PY045.annotation.2.gff3 phages/PY045/PY045.annotation.gff3
+rm phages/PY045/PY045.annotation.gff
+
+
+sed '/^>/ s/ .*//'  phages/PY059/PY059.annotation.cds > phages/PY059/PY059.annotation.cds
+sed '/^>/ s/ .*//' phages/PY059/PY059.annotation.pep > phages/PY059/PY059.annotation.pep
+cp phages/PY059/PY059.annotation.cds2 phages/PY059/PY059.annotation.cds
+cp phages/PY059/PY059.annotation.pep2 phages/PY059/PY059.annotation.pep
+sed -e 's/CDS/mRNA/g' phages/PY059/PY059.annotation.gff > phages/PY059/PY059.annotation.gff3
+sed 's/;.*//' phages/PY059/PY059.annotation.gff3 > phages/PY059/PY059.annotation.2.gff3
+cp phages/PY059/PY059.annotation.2.gff3 phages/PY059/PY059.annotation.gff3
+rm phages/PY059/PY059.annotation.gff
+
+sed '/^>/ s/ .*//'  phages/PY065/PY065.annotation.cds > phages/PY065/PY065.annotation.cds2
+sed '/^>/ s/ .*//' phages/PY065/PY065.annotation.pep > phages/PY065/PY065.annotation.pep2
+cp phages/PY065/PY065.annotation.cds2 phages/PY065/PY065.annotation.cds
+cp phages/PY065/PY065.annotation.pep2 phages/PY065/PY065.annotation.pep
+sed -e 's/CDS/mRNA/g' phages/PY065/PY065.annotation.gff > phages/PY065/PY065.annotation.gff3
+sed 's/;.*//' phages/PY065/PY065.annotation.gff3 > phages/PY065/PY065.annotation.2.gff3
+cp phages/PY065/PY065.annotation.2.gff3 phages/PY065/PY065.annotation.gff3
+rm phages/PY065/PY065.annotation.gff
+
+#########SYNIMA
+perl ./Synima/util/Create_full_repo_sequence_databases.pl -r phages/Repo_spec.txt -v
+perl ./Synima/util/Blast_grid_all_vs_all.pl -r phages/Repo_spec.txt -t PEP -e 0.1 -c 1 
+perl ./Synima/util/Blast_all_vs_all_repo_to_Orthofinder.pl  -r phages/Repo_spec.txt -t PEP
+perl ./Synima/util/Orthologs_to_summary.pl -o ./Orthofinder_outdir/Orthogroups.csv -t Orthofinder -d Orthofinder_outdir -r phages/Repo_spec.txt
+perl ./Synima/util/DAGchainer_from_gene_clusters.pl -c phages/GENE_CLUSTERS_SUMMARIES.Orthofinder/GENE_CLUSTERS_SUMMARIES.clusters -r phages/Repo_spec.txt -v -i 4
+####use outputs from DAGchainer
+cp Repo_spec.txt.dagchainer.aligncoords ./GENE_CLUSTERS_SUMMARIES.Orthofinder/
+cp Repo_spec.txt.dagchainer.aligncoords.spans ./GENE_CLUSTERS_SUMMARIES.Orthofinder/
+perl ./Synima/SynIma.pl -a phages/Repo_spec.txt.dagchainer.aligncoords -b phages/Repo_spec.txt.dagchainer.aligncoords.spans
+
+
+
