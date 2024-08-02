@@ -13,246 +13,553 @@ library(Rmisc)
 #library(grafify)
 library(flux)
 library(car)
-disease=read.table("Disease_index.txt", header=T, sep="\t") ###load all files, including Disease, microbiome composition, phage abundance in PFU/ml, the abudance of the taxa identified by the random forest and the Area under the diseased curve of the plants in the glasshouse
-taxa=read.table("taxa_absolute.txt", header=T, sep="\t")
-phage=read.table("phage_concentration.txt", header=T, sep="\t")
-RF=read.table("only_RF_taxa.txt", header=T, sep="\t")
-AUC=read.table("AUC.txt", header=T, sep="\t")
+setwd("..")
 
-load(file = "phyloseq.RData") ####obtained from the script of the soil microbiome composition
-###### as in previous script get PcoA and use it to assess first PcoA components
 library(vegan)
 library(tidyverse)
 library(phyloseq)
 
-data_phylo_filt = filter_taxa(physeq, function(x) sum(x > 2) > (0.11 * length(x)), TRUE) 
+load(file = "phyloseq.RData")
+data.scores.sites=read.table("NMDS_coordinates_samples.txt",sep="\t",header=T)
+groups=read.table("groups_no_49.txt",header=T,sep="\t") ####not having 49
+
+table1=data.scores.sites
+groups=read.table("groups_no_49.txt",header=T,sep="\t") ####not having 49
+table2=left_join(table1,groups,by="SampleName")
+table2$NMD1_position=with(table2, ifelse(table2$NMDS1 >0, "shifted","centered"))
+table2$Phage_NMDS1=paste(table2$Phages,"_",table2$NMD1_position)
+table2$Phage_NMDS1=sub(" ","", table2$Phage_NMDS1)
+table2$Phage_NMDS1=sub(" ","", table2$Phage_NMDS1)
+
+
+data_phylo_filt = filter_taxa(physeq, function(x) sum(x > 2) > (0.11 * length(x)), TRUE) ###at least in 11% samples which matches that couple of them have 11 replicates
 set.seed(2747) # set seed for analysis reproducibility
 OTU_filt_rar = rarefy_even_depth(otu_table(data_phylo_filt), rngseed = TRUE, replace = T) # rarefy the raw data using Phyloseq package
 data_otu_filt_rar = data.frame(otu_table(OTU_filt_rar)) # create a separated file
 data_phylo_filt_rar <- phyloseq(OTU_filt_rar, TAX, MD) 
+data_taxo_filt_rar <- data.frame(m_tax[which(rownames(m_tax) %in% rownames(data_otu_filt_rar)),])
+to_remove <- c("JI1", "JI2", "JI3", "JI4", "JI5", "JI6", "BEFORE.1", "BEFORE.2", "BEFORE.3", "BEFORE.4", "BEFORE.5", "BEFORE.6",
+"FERA.133",
+"FERA.136",
+"FERA.137",
+"FERA.138",
+"FERA.140",
+"FERA.142",
+"FERA.144",
+"FERA.134",
+"FERA.135",
+"FERA.139",
+"FERA.141",
+"FERA.143",
+"FERA.121",
+"FERA.122",
+"FERA.123",
+"FERA.124",
+"FERA.125",
+"FERA.126",
+"FERA.127",
+"FERA.128",
+"FERA.129",
+"FERA.130",
+"FERA.131",
+"FERA.132")
+###remove negative control and Rs treated samples
 
-dist_bc <- as.matrix(vegdist(data_otu_filt_rar, method = "bray")) 
-
-# a peek at the first five rows / columns
-dist_bc[1:5, 1:5]
-pcoa_bc = ordinate(data_phylo_filt_rar, "PCoA", "bray") 
-as.data.frame(pcoa_bc$vectors[,c(1,2,3)])-> pcoa_axis
-
-pcoa_axis$SampleName<-rownames(pcoa_axis)
+data_phylo_filt_rar2 <- prune_samples(!(sample_names(data_phylo_filt_rar) %in% to_remove),data_phylo_filt_rar)
+data_phylo_filt_rar<-data_phylo_filt_rar2 ###142 samples
 
 
-####now pull all together for each sample
-disease=left_join(disease, AUC,by=c("SampleName"="Sample_Name"))
-disease_axis=left_join(disease,pcoa_axis, by=c("SampleName"="SampleName"))
-disease_axis_phage=left_join(disease_axis,phage, by=c("SampleName"="Sample"))
-write.table(disease_axis_phage, "Combined_disease_PCOa_three_axis_phage.txt", col.names=T,sep="\t")
+####add table 2 from NMDS results
+table3=table2[,c(1,2,3,16,17)] ##"NMDS1","NMDS2","SampleName","NMD1_position","Phage_NMDS1"    
+
+rownames(table3) <- table3$SampleName
+# Turn into `sample_data` 
+sam.new <- sample_data(table3)
+head(sam.new)
+data_phylo_filt_rar=merge_phyloseq(data_phylo_filt_rar, sam.new)
+
+sample_data(data_phylo_filt_rar)$category3=factor(sample_data(data_phylo_filt_rar)$category3,levels=c("Negative_control","Healthy","Diseased"))
+sample_data(data_phylo_filt_rar)$category_phages=factor(sample_data(data_phylo_filt_rar)$category_phages,levels=c("Negative_control","Individual_Healthy","Individual_Diseased","Double_Healthy","Double_Diseased","Rs.UW551_Healthy","Rs.UW551_Diseased"))
+sample_data(data_phylo_filt_rar)$Phages=factor(sample_data(data_phylo_filt_rar)$Phages,levels=c("Negative_control","Individual","Double","Rs.UW551"))
+sample_data(data_phylo_filt_rar)$Phage_NMDS1=factor(sample_data(data_phylo_filt_rar)$Phage_NMDS1,levels=c("Negative_control_centered","Individual_centered","Individual_shifted","Double_centered","Double_shifted", "Rs.UW551_centered"))
 
 
-disease_RF=left_join(disease,RF, by=c("SampleName"="SampleName"))
-disease_RF_phage=left_join(disease_axis,phage, by=c("SampleName"="Sample"))
-write.table(disease_RF_phage, "Combined_disease_RF_taxa_phage.txt", col.names=T,sep="\t")
+data_otu_filt_rar=data_phylo_filt_rar@otu_table ###118 samples 2747 rows 
+data_otu_filt_rar=as.data.frame(data_otu_filt_rar)
+#####prepare data from rarefy data   https://scienceparkstudygroup.github.io/microbiome-lesson/07-bacterial-composition/index.html
+data_taxo_filt_rar <- data.frame(m_tax[which(rownames(m_tax) %in% rownames(data_otu_filt_rar)),])
+data_taxo_filt_rar$OTU_id <- rownames(data_taxo_filt_rar) # add the rownames in a column in order to be able to use it later with dplyr
+metadata=data.frame(data_phylo_filt_rar@sam_data) ###dont do as.data.frame but instead dada.frame https://github.com/joey711/phyloseq/issues/190
 
-disease_axis_phage_RF=left_join(disease_axis_phage,RF, by=c("SampleName"="SampleName"))
-write.table(disease_axis_phage_RF, "Combined_disease_PCOa_three_axis_phage_RF.txt", col.names=T,sep="\t")
+data_grp_temp <- metadata
+data_grp_temp$sample_id <- rownames(data_grp_temp) # to be able to use the column later with dplyr
+data_otu_filt_rar$OTU_id<-rownames(data_otu_filt_rar)
+data_otu_filt_rar_join=left_join(data_otu_filt_rar, data_taxo_filt_rar, by="OTU_id")
+
+Genus_to_keep=as.data.frame(physeq@tax_table)
+keep=(Genus_to_keep$Genus) ##1866 levels
+keep= unique(keep[keep != ""])
 
 
-###############
-2. PLSPM (Partial Least Squares Path Modeling) model with PcoA data -- create a model to understand the interaction between phages - microbiome - R. solanacearum - disease development
-###############
+data_filt=data_otu_filt_rar_join[data_otu_filt_rar_join$Genus %in% keep, ]
+dim(data_filt) ##1803 127
+write.table(data_filt,"filt_Genus_all_1866.txt",sep="\t")
+rownames(data_filt)<-data_filt$OTU_num
+data_filt2=data_filt[,c(1:118,126)] #########all samples and Genus check is correct
+######Group by
+library(dplyr)
+data_filt2 <- data_filt2 %>% group_by(Genus) %>% summarise_each(funs(sum)) %>%   as.data.frame()
 
-###########Create Plspm model using PcoA info
+write.table(data_filt2,"filt_Genus_all_1866.txt",sep="\t")
+data_otu_filt_rar_temp <- data.frame(t(data_filt2))
+colnames(data_otu_filt_rar_temp)=data_otu_filt_rar_temp[1,]
+data_otu_filt_rar_temp=data_otu_filt_rar_temp[-1,]
+data_otu_filt_rar_temp$sample_id <- rownames(data_otu_filt_rar_temp) # to be able to use the column later with dplyr
+data_otu_grp_filt_rar <- inner_join(data_grp_temp, data_otu_filt_rar_temp, by = "sample_id")
+data_otu_grp_filt_rar[1:5, 1:15] ####142 38
+write.table(data_otu_grp_filt_rar,"topall_samples_final_genus_all_1866.txt",sep="\t")
+
+
+
+############
+#2. COMBINE WITH AUDC and PHAGE ABUNDANCE
+############
+
+#########PLSPM model with topall_samples_final_genus_all_1866.txt 
+####to create the model need to tidy up those dataframes
+####combine with AUC and with Phage abundance
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(multcomp)
+library(FSA)
+library(ggpubr)
+
+library(tidyverse)
+
+data_AUC=read.table("AUC.txt", sep="\t", header=T)
+data_AUC$replicate=rownames(data_AUC)
+disease=read.table("disease_changed.txt", header=T, sep="\t")
+disease=disease[grep("21", disease$Time_DPI),]
+disease$replicate=paste(disease$Treatment_decoded,"__",disease$Replicate)
+disease$replicate=sub(" ","",disease$replicate)
+disease$replicate=sub(" ","",disease$replicate)
+data_AUC_2=left_join(data_AUC, disease, by="replicate")
+table_input=data_otu_grp_filt_rar
+table_input=table_input[,c(1, 4,11,17,14,15,5, 19:624)] #####bacteria from 19 to 624, Ralstonia is column number 473, keep also Diseaseindex=col5, NMDS1 and NMDS2 =col14 and col15, phage_NMDS1= col17, GroupName=4, phages=col11) 1=sampleName
+table_input2=left_join(table_input, data_AUC_2, by="SampleName")
+
+phage_data=read.table("table_phages_all12_menos2_Genus.txt",header=T,sep="\t")
+phage_data=phage_data[,c(1,44)] ###keep only sampleName, PFU and log(PFU)
+phage_data$PFU_ml=phage_data$PFU_ml+0.001
+phage_data$log_PFU=log(phage_data$PFU_ml)
+
+table_input3=left_join(table_input2, phage_data, by="SampleName")
+
+###retidy again
+table_input4=table_input3[,c(1,2,3,635,636,4,5,6,7,614,462, 8:461, 463:613)] ##### 1 sampleName, 2 Group Name.x, 3 Phages.x(ind or double), 635 and 636 (PFU and logs), Phage_NMDS1 is col4, 5 and 6 coordinates NMDS, 7 DI and 622 AUC, then Rasltonia  462, then bacteria 
+
+####################NOW COMBINE ALL FOR THE PLSPM MODEL
+keep3=c("SampleName","Group_Name","Phages","log_PFU","PFU_ml" ,"Phage_NMDS1","NMDS1","NMDS2","Diseaseindex","AUC"  ,"Ralstonia")
+colnames(table_input4)=sub("Group_Name.x","Group_Name",colnames(table_input4))
+colnames(table_input4)=sub("Phages.x","Phages",colnames(table_input4))
+colnames(table_input4)=sub("Diseaseindex.x","Diseaseindex",colnames(table_input4))
+table_input5=table_input4[, keep3]
+
+
+############
+#3. PLSPM considering full dataset
+############
+
 library(plspm)
 Phages<-c(0,0,0,0)
-other_bacteria<-c(0,0,0,0)
+Microbiome<-c(1,0,0,0)
 Ralstonia<-c(1,1,0,0)
-Diseaseindex<-c(1,1,1,0)
+Disease<-c(0,0,1,0)
 
-foot_path <- rbind(Phages,other_bacteria,Ralstonia,Diseaseindex)
+foot_path <- rbind(Phages,Microbiome,Ralstonia,Disease)
 colnames(foot_path) <- rownames(foot_path)
 foot_path
 innerplot(foot_path)
 
-#####create in excel adding info to the phages
-model_input=read.table("to_input_in_model.txt", header=T, sep="\t",row.names=1)
+model_input<-table_input5
 
 
-foot_blocks <- list(5:6,8:9,18,20:21)
-foot_modes <- c("A","A", "A","A")
-model_input$Number=sub("Individual",1,model_input$Number)
-model_input$Number=sub("Double",2,model_input$Number)
-model_input$Number=sub("Ralstonia",0,model_input$Number)
-model_input$Number=as.numeric(model_input$Number)
+foot_blocks <- list(4,7,11,9:10) ###7-8 NMDS coordinates 12:616 all genus
+foot_modes <- c("A","A","A","A")
+model_input[,c(4)]=sapply(model_input[,c(4)], as.numeric)
+model_input[,c(7:8)]=sapply(model_input[,c(7:8)], as.numeric)
+model_input[,c(9:10)]=sapply(model_input[,c(9:10)], as.numeric)
+model_input[,c(11)]=sapply(model_input[,c(11)], as.numeric)
+pls <- plspm(Data = model_input, path_matrix = foot_path, blocks = foot_blocks, modes = foot_modes,boot.val=TRUE,br=500)
 
-model_input$Related=sub("Related",1,model_input$Related)
-model_input$Related=sub("Unrelated",2,model_input$Related)
-model_input$Related =as.numeric(model_input$Related)
+pls$unidim ####
+#           Mode MVs   C.alpha    DG.rho  eig.1st   eig.2nd
+#Phages        A   1 1.0000000 1.0000000 1.000000 0.0000000
+#Microbiome    A   1 1.0000000 1.0000000 1.000000 0.0000000
+#Ralstonia     A   1 1.0000000 1.0000000 1.000000 0.0000000
+#Disease       A   2 0.9518767 0.9765037 1.908172 0.0918276
 
-model_input$Ralstonia=as.numeric(model_input$Ralstonia)
-model_input$Pseudomonas=as.numeric(model_input$Pseudomonas)
-model_input$Lactobacillus=as.numeric(model_input$Lactobacillus)
-model_input$Burkholderia_Caballeronia_Paraburkholderia=as.numeric(model_input$Burkholderia_Caballeronia_Paraburkholderia)
-model_input$Sphingomonas=as.numeric(model_input$Sphingomonas)
-model_input$Muribaculaceae=as.numeric(model_input$Muribaculaceae)
-model_input$Gemmatimonas=as.numeric(model_input$Gemmatimonas)
-model_input$Rhodanobacter=as.numeric(model_input$Rhodanobacter)
-model_input$Diseaseindex=as.numeric(model_input$Diseaseindex)
-model_input$AUC=as.numeric(model_input$AUC)
-foot_pls <- plspm(Data = model_input, path_matrix = foot_path, blocks = foot_blocks, modes = foot_modes)
+tiff("loadings_model_simple_NMDS1_2.tiff", res=300, he=200, wi=400, units="mm")
+par(mar=c(1,1,1,30))
+plot(pls, what = "loadings",txt.col = "black",lcol = "black",box.size=0.091,box.col="white",box.cex=1.8,cex.txt=2,arr.pos = 0.55)
+dev.off()
 
-
-#####Results are included for each category of the foot_pls list 
-foot_pls$gof ### goodness-of-fit
-#[1]  0.7031931
-
-foot_pls$effects ###total effects
-#                   relationships     direct    indirect      total
-#1       Phages -> other_bacteria  0.0000000  0.00000000  0.0000000
-#2            Phages -> Ralstonia -0.1798797  0.00000000 -0.1798797
-#3         Phages -> Diseaseindex -0.1335459 -0.07627308 -0.2098190
-#4    other_bacteria -> Ralstonia -0.8977936  0.00000000 -0.8977936
-#5 other_bacteria -> Diseaseindex -0.2960968 -0.38068499 -0.6767818
-#6      Ralstonia -> Diseaseindex  0.4240228  0.00000000  0.4240228
+pls$outer_model
+#          name      block    weight   loading communality  redundancy
+#1      log_PFU     Phages 1.0000000 1.0000000   1.0000000 0.000000000
+#2        NMDS1 Microbiome 1.0000000 1.0000000   1.0000000 0.002155283
+#3    Ralstonia  Ralstonia 1.0000000 1.0000000   1.0000000 0.087070422
+#4 Diseaseindex    Disease 0.4977385 0.9754568   0.9515160 0.360283692
+#5          AUC    Disease 0.5260217 0.9780540   0.9565897 0.362204774
 
 
-foot_pls$crossloadings ## cross-loadings
-#          name          block      Phages other_bacteria    Ralstonia Diseaseindex
-#1 binary_phage         Phages  0.93957960     -0.2177748  0.008618194  -0.05239553
-#2      Related         Phages  0.97756990     -0.2738508  0.081021357  -0.01815134
-#3       Axis.1 other_bacteria -0.29022718      0.4286169 -0.306315755  -0.11586834
-#4       Axis.2 other_bacteria -0.20268142      0.9663254 -0.838589568  -0.64373885
-#5    Ralstonia      Ralstonia  0.05549119     -0.8506353  1.000000000   0.66848257
-#6          AUC   Diseaseindex -0.09482659     -0.6183905  0.680921896   0.97649094
-#7 Diseaseindex   Diseaseindex  0.04515439     -0.5866937  0.611324525   0.96542764
- 
+Paths = pls$path_coefs
+arrow_lwd = 20 * round(Paths, 2)
+arrow_lwd <- abs(arrow_lwd)
 
-foot_pls$inner_summary ###summary inner model
-#                     Type        R2 Block_Communality Mean_Redundancy       AVE
-#Phages          Exogenous 0.0000000         0.9192264       0.0000000 0.9192264
-#other_bacteria  Exogenous 0.0000000         0.5587486       0.0000000 0.5587486
-#Ralstonia      Endogenous 0.7537132         1.0000000       0.7537132 1.0000000
-#Diseaseindex   Endogenous 0.4718828         0.9427925       0.4448876 0.9427925
+tiff("model_path_coefficients-simple_NMDS1_2.tiff", res=300, he=240, wi=400, units="mm")
+plot(pls,arr.pos = 0.35, lcol = "black",    txt.col = "black",colpos = "#1F449C", colneg = "#F05039",box.size=0.09,box.cex=2.8,cex.txt=2.8,arr.lwd = arrow_lwd)
+dev.off()
 
 
-foot_pls$unidim ### unidimensionality
-
-#               Mode MVs   C.alpha    DG.rho  eig.1st   eig.2nd
-#Phages            A   2 0.9168147 0.9600682 1.846406 0.1535939
-#other_bacteria    A   2 0.3075164 0.7428086 1.181695 0.8183046
-#Ralstonia         A   1 1.0000000 1.0000000 1.000000 0.0000000
-#Diseaseindex      A   2 0.9398590 0.9708073 1.886541 0.1134585
-
-foot_pls$inner_model
- $Ralstonia
-                    Estimate Std. Error       t value     Pr(>|t|)
-Intercept       4.467049e-18 0.04403710  1.014383e-16 1.000000e+00
-Phages         -1.798797e-01 0.04563322 -3.941858e+00 1.327941e-04
-other_bacteria -8.977936e-01 0.04563322 -1.967412e+01 2.245239e-40
-
-$Diseaseindex
-                    Estimate Std. Error       t value    Pr(>|t|)
-Intercept      -1.382336e-16 0.06474107 -2.135176e-15 1.000000000
-Phages         -1.335459e-01 0.07107324 -1.878990e+00 0.062556193
-other_bacteria -2.960968e-01 0.13497460 -2.193722e+00 0.030089983
-Ralstonia       4.240228e-01 0.13045458  3.250348e+00 0.001478482
-
-###############
-3. PLSM-PM model with abudance of the taxa identified by the Random Forest (Ralstonia, Gemmatimonas, Muribaculaceae,Sphingomonas, Pseudomonas, Rhodanobacter, Lactobacillus, Burkholderia_Caballeronia_Paraburkholderia, the model is created as above and the same results are reported
-###############
-
-###########Create Plspm model using RF taxa
-Phages<-c(0,0,0,0)
-other_bacteria<-c(0,0,0,0)
-Ralstonia<-c(1,1,0,0)
-Diseaseindex<-c(1,1,1,0)
-
-foot_path <- rbind(Phages,other_bacteria,Ralstonia,Diseaseindex)
-colnames(foot_path) <- rownames(foot_path)
-foot_path
-innerplot(foot_path)
-
-model_input=read.table("to_input_in_model.txt", header=T, sep="\t",row.names=1)
-
-
-foot_blocks <- list(5:6,11:17,18,20:21)
-foot_modes <- c("A","A", "A","A")
-model_input$Number=sub("Individual",1,model_input$Number)
-model_input$Number=sub("Double",2,model_input$Number)
-model_input$Number=sub("Ralstonia",0,model_input$Number)
-model_input$Number=as.numeric(model_input$Number)
-
-model_input$Related=sub("Related",1,model_input$Related)
-model_input$Related=sub("Unrelated",2,model_input$Related)
-model_input$Related =as.numeric(model_input$Related)
-
-model_input$Ralstonia=as.numeric(model_input$Ralstonia)
-model_input$Pseudomonas=as.numeric(model_input$Pseudomonas)
-model_input$Lactobacillus=as.numeric(model_input$Lactobacillus)
-model_input$Burkholderia_Caballeronia_Paraburkholderia=as.numeric(model_input$Burkholderia_Caballeronia_Paraburkholderia)
-model_input$Sphingomonas=as.numeric(model_input$Sphingomonas)
-model_input$Muribaculaceae=as.numeric(model_input$Muribaculaceae)
-model_input$Gemmatimonas=as.numeric(model_input$Gemmatimonas)
-model_input$Rhodanobacter=as.numeric(model_input$Rhodanobacter)
-model_input$Diseaseindex=as.numeric(model_input$Diseaseindex)
-model_input$AUC=as.numeric(model_input$AUC)
-foot_pls <- plspm(Data = model_input, path_matrix = foot_path, blocks = foot_blocks, modes = foot_modes)
-
-foot_pls$gof
-#[1] 0.4330806
-
-
-foot_pls$effects
-#                   relationships      direct   indirect       total
-#1       Phages -> other_bacteria  0.00000000  0.0000000  0.00000000
-#2            Phages -> Ralstonia -0.09406307  0.0000000 -0.09406307
-#3         Phages -> Diseaseindex -0.06518551 -0.0638119 -0.12899741
-#4    other_bacteria -> Ralstonia  0.44142503  0.0000000  0.44142503
-#5 other_bacteria -> Diseaseindex -0.01508632  0.2994605  0.28437417
-#6      Ralstonia -> Diseaseindex  0.67839491  0.0000000  0.67839491
- 
-
-
-foot_pls$crossloadings
-#                                         name          block      Phages other_bacteria    Ralstonia Diseaseindex
-#1                                binary_phage         Phages  0.93966686      0.2720549  0.008618194  -0.05266241
-#2                                     Related         Phages  0.97751616      0.3596076  0.081021357  -0.01840160
-#3  Burkholderia_Caballeronia_Paraburkholderia other_bacteria  0.02104586      0.5023527  0.071274224  -0.14375507
-#4                                Gemmatimonas other_bacteria  0.25278170      0.6136180  0.036456042  -0.06047421
-#5                               Lactobacillus other_bacteria -0.20682777     -0.6486425 -0.251266999  -0.11531133
-#6                              Muribaculaceae other_bacteria  0.26843990      0.2604693  0.005365917   0.06769343
-#7                                 Pseudomonas other_bacteria -0.20307199     -0.8395316 -0.324328093  -0.20610243
-#8                               Rhodanobacter other_bacteria  0.16166638      0.5663439  0.041889168  -0.11773759
-#9                                Sphingomonas other_bacteria -0.33338178     -0.8409263 -0.330930227  -0.13599169
-#10                                  Ralstonia      Ralstonia  0.05545878      0.4095635  1.000000000   0.66860099
-#11                                        AUC   Diseaseindex -0.09484549      0.2197798  0.680921896   0.97668644
-#12                               Diseaseindex   Diseaseindex  0.04514214      0.2509286  0.611324525   0.96519035
-
-foot_pls$inner_summary
-#                     Type        R2 Block_Communality Mean_Redundancy       AVE
-#Phages          Exogenous 0.0000000         0.9192558       0.0000000 0.9192558
-#other_bacteria  Exogenous 0.0000000         0.4071689       0.0000000 0.4071689
-#Ralstonia      Endogenous 0.1755750         1.0000000       0.1755750 1.0000000
-#Diseaseindex   Endogenous 0.4520743         0.9427544       0.4261951 0.9427544
- 
-
-
-foot_pls$unidim
-
-#               Mode MVs   C.alpha     DG.rho  eig.1st   eig.2nd
-#Phages            A   2 0.9168147 0.96006820 1.846406 0.1535939
-#other_bacteria    A   7 0.0000000 0.05770228 3.788058 1.1773841
-#Ralstonia         A   1 1.0000000 1.00000000 1.000000 0.0000000
-#Diseaseindex      A   2 0.9398590 0.97080733 1.886541 0.1134585
-
-foot_pls$inner_model
+pls$inner_model
+#$Microbiome
+#              Estimate Std. Error      t value  Pr(>|t|)
+#Intercept 1.383412e-16 0.09274756 1.491589e-15 1.0000000
+#Phages    4.642503e-02 0.09274756 5.005525e-01 0.6176345##
+#
 #$Ralstonia
-#                    Estimate Std. Error       t value     Pr(>|t|)
-#Intercept       5.019496e-17 0.08057007  6.229977e-16 1.000000e+00
-#Phages         -9.406307e-02 0.08563219 -1.098455e+00 2.740842e-01
-#other_bacteria  4.414250e-01 0.08563219  5.154896e+00 9.458793e-07
+#                Estimate Std. Error       t value    Pr(>|t|)
+#Intercept   4.250194e-17 0.08909836  4.770227e-16 1.000000000
+#Phages      1.196346e-01 0.08919453  1.341277e+00 0.182473334
+#Microbiome -2.753481e-01 0.08919453 -3.087051e+00 0.002533684
+#
+#$Disease
+#              Estimate Std. Error      t value     Pr(>|t|)
+#Intercept 2.122775e-17 0.07318836 2.900427e-16 1.000000e+00
+#Ralstonia 6.153387e-01 0.07318836 8.407603e+00 1.223643e-13
+#
+pls$effects
+            relationships      direct    indirect       total
+1    Phages -> Microbiome  0.04642503  0.00000000  0.04642503
+2     Phages -> Ralstonia  0.11963461 -0.01278304  0.10685157
+3       Phages -> Disease  0.00000000  0.06574991  0.06574991
+4 Microbiome -> Ralstonia -0.27534809  0.00000000 -0.27534809
+5   Microbiome -> Disease  0.00000000 -0.16943234 -0.16943234
+6    Ralstonia -> Disease  0.61533872  0.00000000  0.61533872
 
-#$Diseaseindex
-#                    Estimate Std. Error       t value     Pr(>|t|)
-#Intercept       2.914294e-16 0.06594404  4.419344e-15 1.000000e+00
-#Phages         -6.518551e-02 0.07041938 -9.256757e-01 3.563841e-01
-#other_bacteria -1.508632e-02 0.07707160 -1.957443e-01 8.451257e-01
-#Ralstonia       6.783949e-01 0.07262731  9.340769e+00 4.400723e-16
+pls$inner_summary ##. R2
+#indicates the amount of variance in the endogenous latent
+#variable explained by its independent latent variables
+#                 Type          R2 Block_Communality Mean_Redundancy       AVE
+                 Type          R2 Block_Communality Mean_Redundancy       AVE
+Phages      Exogenous 0.000000000         1.0000000     0.000000000 1.0000000
+Microbiome Endogenous 0.002155283         1.0000000     0.002155283 1.0000000
+Ralstonia  Endogenous 0.087070422         1.0000000     0.087070422 1.0000000
+Disease    Endogenous 0.378641744         0.9540528     0.361244233 0.9540528
+
+
+pls$gof
+#[1] 0.3857332
+
+
+
+
+########with bootstrap
+pls$boot
+#
+#$weights
+#                      Original Mean.Boot    Std.Error  perc.025  perc.975
+#Phages-log_PFU       1.0000000 1.0000000 1.214359e-16 1.0000000 1.0000000
+#Microbiome-NMDS1     1.0000000 1.0000000 1.341911e-16 1.0000000 1.0000000
+#Ralstonia-Ralstonia  1.0000000 1.0000000 1.189699e-16 1.0000000 1.0000000
+#Disease-Diseaseindex 0.4977385 0.5010990 1.921859e-02 0.4694122 0.5448847
+#Disease-AUC          0.5260217 0.5225954 2.010918e-02 0.4769760 0.5575888
+#
+#$loadings
+#                      Original Mean.Boot    Std.Error  perc.025  perc.975
+#Phages-log_PFU       1.0000000 1.0000000 6.593504e-17 1.0000000 1.0000000
+#Microbiome-NMDS1     1.0000000 1.0000000 6.364758e-17 1.0000000 1.0000000
+#Ralstonia-Ralstonia  1.0000000 1.0000000 7.438476e-17 1.0000000 1.0000000
+#Disease-Diseaseindex 0.9754568 0.9757273 4.856888e-03 0.9660666 0.9846100
+#Disease-AUC          0.9780540 0.9778298 3.801161e-03 0.9700334 0.9852284
+#
+#$paths
+#                           Original   Mean.Boot  Std.Error    perc.025   perc.975
+#Phages -> Microbiome     0.04642503  0.03643582 0.08879381 -0.13699587  0.2022513
+#Phages -> Ralstonia      0.11963461  0.12517742 0.08205038 -0.03479108  0.2768385
+#Microbiome -> Ralstonia -0.27534809 -0.27883549 0.07077211 -0.41055918 -0.1370076
+#Ralstonia -> Disease     0.61533872  0.61430200 0.06642272  0.47944378  0.7314982
+#
+#$rsq
+#              Original   Mean.Boot  Std.Error     perc.025   perc.975
+#Microbiome 0.002155283 0.009196142 0.01179517 1.297351e-05 0.04190621
+#Ralstonia  0.087070422 0.101941647 0.04702132 2.696233e-02 0.21975851
+#Disease    0.378641744 0.381770105 0.08067768 2.298704e-01 0.53509073
+#
+#$total.efs
+#                           Original   Mean.Boot  Std.Error    perc.025    perc.975
+#Phages -> Microbiome     0.04642503  0.03643582 0.08879381 -0.13699587  0.20225135
+#Phages -> Ralstonia      0.10685157  0.11360278 0.08428902 -0.05158872  0.27565267
+#Phages -> Disease        0.06574991  0.07000584 0.05318848 -0.03109524  0.18142308
+#Microbiome -> Ralstonia -0.27534809 -0.27883549 0.07077211 -0.41055918 -0.13700765
+#Microbiome -> Disease   -0.16943234 -0.17016931 0.04335440 -0.25444344 -0.08738788
+#Ralstonia -> Disease     0.61533872  0.61430200 0.06642272  0.47944378  0.73149822
+
+
+############
+#4. PLSPM comparing shifted and centered microbiomes
+############
+
+############
+#4.1 PLSPM comparing shifted microbiomes
+############
+foot_blocks <- list(4,7,11,9:10) ###7-8 NMDS coordinates 12:616 all genus
+foot_modes <- c("A","A","A","A")
+model_input[,c(4)]=sapply(model_input[,c(4)], as.numeric)
+model_input[,c(7)]=sapply(model_input[,c(7)], as.numeric)
+model_input[,c(9:10)]=sapply(model_input[,c(9:10)], as.numeric)
+model_input[,c(11)]=sapply(model_input[,c(11)], as.numeric)
+
+
+shifted = subset(model_input, model_input$Phage_NMDS1 == "Individual_shifted" |model_input$Phage_NMDS1 ==  "Double_shifted")
+shifted_pls = plspm(shifted, path_matrix = foot_path, blocks = foot_blocks, modes = foot_modes, boot.val=TRUE, br=500)
+
+
+Paths = shifted_pls$path_coefs
+arrow_lwd = 20 * round(Paths, 2)
+arrow_lwd <- abs(arrow_lwd)
+
+tiff("model_path_coefficients_shifted_simple-NMDS1_2.tiff", res=300, he=240, wi=400, units="mm")
+plot(shifted_pls,arr.pos = 0.35, lcol = "black",    txt.col = "black",colpos = "#1F449C", colneg = "#F05039",box.size=0.09,box.cex=2.8,cex.txt=2.8,arr.lwd = arrow_lwd)
+dev.off()
+
+tiff("loadings_model_shifted_simple-NMDS1_2.tiff", res=300, he=240, wi=400, units="mm")
+plot(shifted_pls,  what = "loadings",txt.col = "black",lcol = "black",box.size=0.091,box.col="white",box.cex=1.8,cex.txt=2,arr.pos = 0.55)
+dev.off()
+
+shifted_pls$gof
+#[1] 0.4366634
+
+shifted_pls$inner_summary
+#                 Type         R2 Block_Communality Mean_Redundancy       AVE
+#Phages      Exogenous 0.00000000         1.0000000      0.00000000 1.0000000
+#Microbiome Endogenous 0.04092046         1.0000000      0.04092046 1.0000000
+#Ralstonia  Endogenous 0.17358925         1.0000000      0.17358925 1.0000000
+#Disease    Endogenous 0.38165826         0.9595025      0.36620205 0.9595025
+##
+
+shifted_pls$inner_model
+#$Microbiome
+#              Estimate Std. Error     t value Pr(>|t|)
+#Intercept 1.331915e-16   0.154845 8.60160e-16 1.000000
+#Phages    2.022881e-01   0.154845 1.30639e+00 0.198882
+#
+#$Ralstonia
+#                Estimate Std. Error       t value   Pr(>|t|)
+#Intercept   7.932181e-17  0.1455679  5.449127e-16 1.00000000
+#Phages     -5.566236e-02  0.1486409 -3.744753e-01 0.71007921
+#Microbiome -4.017992e-01  0.1486409 -2.703153e+00 0.01012097
+#
+#$Disease
+#               Estimate Std. Error       t value     Pr(>|t|)
+#Intercept -2.055734e-16  0.1243324 -1.653418e-15 1.000000e+00
+#Ralstonia  6.177850e-01  0.1243324  4.968818e+00 1.307648e-05
+
+
+shifted_pls$boot
+#$weights
+#                      Original Mean.Boot    Std.Error  perc.025  perc.975
+#Phages-log_PFU       1.0000000 1.0000000 1.250437e-16 1.0000000 1.0000000
+#Microbiome-NMDS1     1.0000000 1.0000000 1.149574e-16 1.0000000 1.0000000
+#Ralstonia-Ralstonia  1.0000000 1.0000000 1.236532e-16 1.0000000 1.0000000
+#Disease-Diseaseindex 0.5091914 0.5168459 3.967752e-02 0.4498284 0.5999603
+#Disease-AUC          0.5116936 0.5031333 4.124630e-02 0.4170284 0.5676522
+#
+#$loadings
+#                      Original Mean.Boot    Std.Error  perc.025  perc.975
+#Phages-log_PFU       1.0000000 1.0000000 1.047253e-16 1.0000000 1.0000000
+#Microbiome-NMDS1     1.0000000 1.0000000 1.084335e-16 1.0000000 1.0000000
+#Ralstonia-Ralstonia  1.0000000 1.0000000 1.056645e-16 1.0000000 1.0000000
+#Disease-Diseaseindex 0.9794406 0.9805250 7.657556e-03 0.9616768 0.9926422
+#Disease-AUC          0.9796433 0.9799067 6.682193e-03 0.9655157 0.9916754
+#
+#$paths
+#                           Original   Mean.Boot  Std.Error    perc.025   perc.975
+#Phages -> Microbiome     0.20228807  0.20815188 0.12384941 -0.03610924  0.4432667 ##no
+#Phages -> Ralstonia     -0.05566236 -0.05116541 0.11576579 -0.26737697  0.1732209 ##no
+#Microbiome -> Ralstonia -0.40179917 -0.40393803 0.09699818 -0.57985377 -0.2081801
+#Ralstonia -> Disease     0.61778496  0.61869960 0.10329732  0.42823291  0.8165654
+#
+#$rsq
+#             Original Mean.Boot  Std.Error     perc.025  perc.975
+#Microbiome 0.04092046 0.0586352 0.05510481 0.0004956811 0.1964855
+#Ralstonia  0.17358925 0.1939373 0.07660945 0.0697784634 0.3584662
+#Disease    0.38165826 0.3934382 0.12640719 0.1833855547 0.6667793
+#
+#$total.efs
+#                           Original   Mean.Boot  Std.Error    perc.025    perc.975
+#Phages -> Microbiome     0.20228807  0.20815188 0.12384941 -0.03610924  0.44326673
+#Phages -> Ralstonia     -0.13694154 -0.13473850 0.11525601 -0.36647048  0.07579287
+#Phages -> Disease       -0.08460042 -0.08284305 0.07129144 -0.22375522  0.05455921
+#Microbiome -> Ralstonia -0.40179917 -0.40393803 0.09699818 -0.57985377 -0.20818005
+#Microbiome -> Disease   -0.24822548 -0.25377496 0.08590505 -0.42869967 -0.10852050
+#Ralstonia -> Disease     0.61778496  0.61869960 0.10329732  0.42823291  0.81656544
+
+
+
+############
+#4.2 PLSPM comparing centered microbiomes
+############
+centered = subset(model_input, model_input$Phage_NMDS1 == "Individual_centered" |model_input$Phage_NMDS1 ==  "Double_centered")
+centered_pls = plspm(centered, path_matrix = foot_path, blocks = foot_blocks, modes = foot_modes,boot.val=TRUE, br=500)
+
+Paths = centered_pls$path_coefs
+arrow_lwd = 20 * round(Paths, 2)
+arrow_lwd <- abs(arrow_lwd)
+
+tiff("model_path_coefficients_centered_simple-NMDS1_2.tiff", res=300, he=240, wi=400, units="mm")
+plot(centered_pls,arr.pos = 0.35, lcol = "black",    txt.col = "black",colpos = "#1F449C", colneg = "#F05039",box.size=0.09,box.cex=2.8,cex.txt=2.8,arr.lwd = arrow_lwd)
+dev.off()
+
+centered = subset(model_input, model_input$Phage_NMDS1 == "Individual_centered" |model_input$Phage_NMDS1 ==  "Double_centered")
+centered_pls = plspm(centered, path_matrix = foot_path, blocks = foot_blocks, modes = foot_modes,boot.val=TRUE, br=500)
+
+tiff("loadings_model_centered_simple-NMDS1_2.tiff", res=300, he=240, wi=400, units="mm")
+plot(centered_pls,  what = "loadings",txt.col = "black",lcol = "black",box.size=0.091,box.col="white",box.cex=1.8,cex.txt=2,arr.pos = 0.55)
+dev.off()
+
+centered_pls$gof
+#[1] 0.4505512
+
+
+
+centered_pls$inner_model
+#$Microbiome
+#               Estimate Std. Error       t value    Pr(>|t|)
+#Intercept -2.610682e-16  0.1096037 -2.381928e-15 1.000000000
+#Phages     3.332268e-01  0.1096037  3.040288e+00 0.003267102
+#
+#$Ralstonia
+#               Estimate Std. Error      t value    Pr(>|t|)
+#Intercept  1.679363e-16  0.1085468 1.547133e-15 1.000000000
+#Phages     1.173840e-01  0.1151266 1.019608e+00 0.311281687
+#Microbiome 3.181462e-01  0.1151266 2.763446e+00 0.007234223
+#
+#$Disease
+#               Estimate Std. Error       t value     Pr(>|t|)
+#Intercept -6.835520e-17 0.09084601 -7.524294e-16 1.000000e+00
+#Ralstonia  6.239217e-01 0.09084601  6.867904e+00 1.731322e-09
+
+
+centered_pls$inner_summary
+#                 Type        R2 Block_Communality Mean_Redundancy       AVE
+#Phages      Exogenous 0.0000000         1.0000000       0.0000000 1.0000000
+#Microbiome Endogenous 0.1110401         1.0000000       0.1110401 1.0000000
+#Ralstonia  Endogenous 0.1398849         1.0000000       0.1398849 1.0000000
+#Disease    Endogenous 0.3892782         0.9512434       0.3702983 0.9512434
+
+
+centered_pls$effects                                 
+#            relationships    direct  indirect     total
+#1    Phages -> Microbiome 0.3332268 0.0000000 0.3332268
+#2     Phages -> Ralstonia 0.1173840 0.1060148 0.2233989
+#3       Phages -> Disease 0.0000000 0.1393834 0.1393834
+#4 Microbiome -> Ralstonia 0.3181462 0.0000000 0.3181462
+#5   Microbiome -> Disease 0.0000000 0.1984983 0.1984983
+#6    Ralstonia -> Disease 0.6239217 0.0000000 0.6239217
+
+
+########with bootstrap
+centered_pls$boot
+#$weights
+#                      Original Mean.Boot    Std.Error  perc.025 perc.975
+#Phages-log_PFU       1.0000000 1.0000000 1.233532e-16 1.0000000 1.000000
+#Microbiome-NMDS1     1.0000000 1.0000000 1.180319e-16 1.0000000 1.000000
+#Ralstonia-Ralstonia  1.0000000 1.0000000 1.230524e-16 1.0000000 1.000000
+#Disease-Diseaseindex 0.4864977 0.4898547 2.355252e-02 0.4511784 0.541356
+#Disease-AUC          0.5386776 0.5352586 2.476876e-02 0.4842966 0.578969
+#
+#$loadings
+#                      Original Mean.Boot    Std.Error  perc.025  perc.975
+#Phages-log_PFU       1.0000000 1.0000000 1.111335e-16 1.0000000 1.0000000
+#Microbiome-NMDS1     1.0000000 1.0000000 1.111335e-16 1.0000000 1.0000000
+#Ralstonia-Ralstonia  1.0000000 1.0000000 1.111335e-16 1.0000000 1.0000000
+#Disease-Diseaseindex 0.9727759 0.9729892 6.763696e-03 0.9577370 0.9845923
+#Disease-AUC          0.9778516 0.9776295 4.730912e-03 0.9676067 0.9859303
+#
+#$paths
+#                         Original Mean.Boot  Std.Error   perc.025  perc.975
+#Phages -> Microbiome    0.3332268 0.3245729 0.10382200  0.1064342 0.5106731
+#Phages -> Ralstonia     0.1173840 0.1302980 0.13277831 -0.1396321 0.3701562  ##no
+#Microbiome -> Ralstonia 0.3181462 0.3164290 0.09719458  0.1091014 0.4903012
+#Ralstonia -> Disease    0.6239217 0.6275552 0.07311044  0.4709641 0.7603510
+#
+#$rsq
+#            Original Mean.Boot  Std.Error   perc.025  perc.975
+#Microbiome 0.1110401 0.1161050 0.06627343 0.01132823 0.2607874
+#Ralstonia  0.1398849 0.1662553 0.06098649 0.06021381 0.2979933
+#Disease    0.3892782 0.3991600 0.09046460 0.22182697 0.5781376
+#
+#$total.efs
+#                         Original Mean.Boot  Std.Error    perc.025  perc.975
+#Phages -> Microbiome    0.3332268 0.3245729 0.10382200  0.10643418 0.5106731
+#Phages -> Ralstonia     0.2233989 0.2320387 0.12363990 -0.02400652 0.4505142
+#Phages -> Disease       0.1393834 0.1446903 0.07982116 -0.01625597 0.2945026
+#Microbiome -> Ralstonia 0.3181462 0.3164290 0.09719458  0.10910144 0.4903012
+#Microbiome -> Disease   0.1984983 0.2011072 0.07240423  0.06084514 0.3436403
+#Ralstonia -> Disease    0.6239217 0.6275552 0.07311044  0.47096406 0.7603510
+
+
+
+############
+#4.3 PLSPM comparison between shifted and centered using bootstrap
+############ 
+boot = plspm.groups(pls, model_input$Phage_NMDS1, method = "bootstrap",reps=500)
+boot
+#GROUP COMPARISON IN PLS-PM FOR PATH COEFFICIENTS 
+#
+#Scale of Data:       TRUE 
+#Weighting Scheme:    centroid 
+#Selected method:     bootstrap 
+#Num of replicates:   500 
+#
+#$test 
+#                        global  group.shifted  group.centered  diff.abs  t.stat  deg.fr  p.value  sig.05
+#Phages->Microbiome      0.0464         0.2023          0.3332    0.1309  0.7489     116   0.2277      no
+#Phages->Ralstonia       0.1196        -0.0557          0.1174    0.1730  0.9448     116   0.1734      no
+#Microbiome->Ralstonia  -0.2753        -0.4018          0.3181    0.7199  4.7343     116   0.0000     yes
+#Ralstonia->Disease      0.6153         0.6178          0.6239    0.0061  0.1297     116   0.4485      no
+#
+#Inner models in the following objects: 
+#$global  
+#$group1  
+#$group2  
+
+
+############
+#4.4 PLSPM comparison between shifted and centered using permutation
+############ 
+perm = plspm.groups(pls, model_input$Phage_NMDS1, method  = "permutation",reps=500)
+perm
+#GROUP COMPARISON IN PLS-PM FOR PATH COEFFICIENTS 
+#
+#Scale of Data:       TRUE 
+#Weighting Scheme:    centroid 
+#Selected method:     permutation 
+#Num of replicates:   500 
+#
+#$test 
+#                        global  group.shifted  group.centered  diff.abs  p.value  sig.05
+#Phages->Microbiome      0.0464         0.2023          0.3332    0.1309   0.4930      no
+#Phages->Ralstonia       0.1196        -0.0557          0.1174    0.1730   0.4012      no
+#Microbiome->Ralstonia  -0.2753        -0.4018          0.3181    0.7199   0.0020     yes
+#Ralstonia->Disease      0.6153         0.6178          0.6239    0.0061   0.9681      no
+#
+#Inner models in the following objects: 
+#$global  
+#$group1  
+#$group2  
+
+
