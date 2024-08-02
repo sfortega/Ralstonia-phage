@@ -1,0 +1,308 @@
+#########
+1. Disease glasshouse experiment
+#########
+data <- read.table("scores.txt", header = T, sep = "\t")
+groups=read.table("groups_for_disease.txt",header=T,sep="\t") ####not having 49
+setwd("..")
+
+#########convert phage code names to actual names
+library(tidyverse)
+library(Rmisc)
+library(flux)
+library(car)
+data$Treatment_decoded <- case_when(data$Treatment == "P1" ~ "PYO4",
+                                    data$Treatment == "P2" ~ "PYO45",
+                                    data$Treatment == "P3" ~ "PYO59",
+                                    data$Treatment == "P4" ~ "PYO65",
+                                    data$Treatment == "P1P2" ~ "PYO4.PYO45",
+                                    data$Treatment == "P1P3" ~ "PYO4.PYO59",
+                                    data$Treatment == "P1P4" ~ "PYO4.PYO65",
+                                    data$Treatment == "P2P3" ~ "PYO45.PYO59",
+                                    data$Treatment == "P2P4" ~ "PYO45.PYO65",
+                                    data$Treatment == "P3P4" ~ "PYO59.PYO65",
+                                    data$Treatment == "UW551" ~ "Rs.UW551",
+                                    data$Treatment == "C-" ~ "Negative_control"
+                                    )
+
+#########Change the order of levels in Treatment_decoded column
+data$Treatment_decoded <- factor(data$Treatment_decoded, 
+                                 levels = c("Negative_control","PYO4","PYO45","PYO59","PYO65","PYO4.PYO45","PYO4.PYO59","PYO4.PYO65","PYO45.PYO59","PYO45.PYO65","PYO59.PYO65","Rs.UW551"))
+
+
+#########correct spelling mistake in disease_index column name
+names(data)[6] <- "Disease_Index"
+
+#########add new column indicating whether phage treatments are single or combination treatment
+data$Treatment_phagenum <- case_when(data$Treatment_decoded == "PYO4" ~ "Individual",
+                                     data$Treatment_decoded == "PYO45" ~ "Individual",
+                                     data$Treatment_decoded == "PYO59" ~ "Individual",
+                                     data$Treatment_decoded == "PYO65" ~ "Individual",
+                                     data$Treatment_decoded == "PYO4.PYO45" ~ "Double",
+                                     data$Treatment_decoded == "PYO4.PYO59" ~ "Double",
+                                     data$Treatment_decoded == "PYO4.PYO65" ~ "Double",
+                                     data$Treatment_decoded == "PYO45.PYO59" ~ "Double",
+                                     data$Treatment_decoded == "PYO45.PYO65" ~ "Double",
+                                     data$Treatment_decoded == "PYO59.PYO65" ~ "Double",
+                                     data$Treatment_decoded == "Rs.UW551" ~ "Rs.UW551",
+                                     data$Treatment_decoded == "Negative_control" ~ "Negative_control"
+)
+
+
+data$Treatment_phagenum <- factor(data$Treatment_phagenum, 
+                                 levels = c("Negative_control", "Individual", "Double", "Rs.UW551"))
+
+data$SampleName=paste("FERA.",data$Plant.ID)
+data$SampleName=sub(" ","", data$SampleName)
+data2=left_join(data,groups,by="SampleName")
+write.table(data2, "disease_changed.txt", col.names=T, sep="\t")
+
+color_table2 <-  tibble(
+  Treatment = c("Negative_control","PYO4","PYO45","PYO59","PYO65","PYO4.PYO45","PYO4.PYO59","PYO4.PYO65","PYO45.PYO59","PYO45.PYO65","PYO59.PYO65","Rs.UW551"),
+  Color = c("#777777","#CC6677","#AA4499","#6699CC","#332288","#DDCC77","#117733","#661100","#44AA99", "#0072B2","#D55E00" ,"black"))
+
+data_summary <- summarySE(data = data2, measurevar = "Disease_Index", 
+                          groupvars = c("Time_DPI", "Treatment_decoded", "Treatment_phagenum"),
+                          na.rm = FALSE, conf.interval = 0.95, .drop = TRUE)
+
+#########Plot the figure with average of disease/treatment
+
+tiff("DI_average2.tiff",res=300,he=200,wi=200,units="mm")
+ggplot(data = data_summary, aes(x = Time_DPI, y = Disease_Index, 
+                                          group = Treatment_decoded, col = Treatment_decoded)) +
+    geom_line(size = 1)  +
+       labs(x = "Time (DPI)",
+         y = "Disease Index",
+         col = "Treatment") +scale_colour_manual(values = color_table2$Color)+
+    theme_bw()+
+    theme(panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          panel.grid.major.y = element_blank(),
+          panel.grid.minor.y = element_blank())+ theme( text = element_text(size = 30))
+dev.off()
+
+
+
+
+#########Calculate Area undert the diseased curve - AUC
+library(DescTools)
+
+replicates=c(1,2,3,4,5,6,7,8,9,10,11,12) ###number of plants per treatment
+replicates=as.numeric(replicates)
+data_AUC<-list()
+final_data_AUC<-list()
+final2_data_AUC<-list()
+for (i in 1:length(replicates)){
+
+data_filt=subset(data,data$Replicate==i)
+data_list <- split(data_filt, f = data_filt$Treatment_decoded)
+data_list2 = data_list[which(lapply(data_list, nrow) != 0)]
+for(j in names(data_list2)){print(i);
+  data_AUC[[j]] <- AUC(data_list2[[j]]$Time_DPI, data_list2[[j]]$Disease_Index)
+data_AUC_df <- as.data.frame(data_AUC[[j]])
+colnames(data_AUC_df)=paste(j,i,sep = '__')
+final_data_AUC[[j]]=data_AUC_df
+final_data_AUC_df=as.data.frame(final_data_AUC)
+}
+final2_data_AUC[[i]]=final_data_AUC_df
+}
+final2_data_AUC_df=as.data.frame(final2_data_AUC)
+
+
+final3_data_AUC=as.data.frame(t(final2_data_AUC_df))
+colnames(final3_data_AUC)=c("AUC")
+final3_data_AUC$Sample=rownames(final3_data_AUC)
+final4_data_AUC=final3_data_AUC %>%
+  separate(Sample, c("Treatment_decoded", "Replicate"), "__")
+ write.table(final4_data_AUC,"AUC.txt",sep="\t")
+data_AUC<-final4_data_AUC
+
+#########Plots of the AUDC
+colnames(data_AUC)=sub("_decoded","",colnames(data_AUC))
+data_AUC_summary <- summarySE(data_AUC, measurevar = "AUC", groupvars = c("Treatment"))
+write.table(data_AUC, "data_AUC_all_samples.txt", sep="\t", col.names=T)
+# AUC plot and stats ----------
+
+data_AUC$Treatment=factor(data_AUC$Treatment,levels=c("Negative_control","PYO4","PYO45","PYO59","PYO65","PYO4.PYO45","PYO4.PYO59","PYO4.PYO65","PYO45.PYO59","PYO45.PYO65","PYO59.PYO65","Rs.UW551"))
+
+
+library(FSA)
+library(rcompanion)
+library(rstatix)
+library(multcomp)
+model  <- lm(AUC ~ Treatment, data = data_AUC)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- data_AUC %>% kruskal_test(AUC ~ Treatment)
+res.kruskal
+## AUC     144      18.8    11 0.0642 Kruskal-Wallis
+
+pwc2 <- dunnTest(AUC ~ Treatment,data=data_AUC,method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"Treatment" # change the name of grouping factor according to the dataset (df)
+cld
+
+library(ggpubr)
+cld$Treatment=factor(cld$Treatment,levels=c("Negative_control","PYO4","PYO45","PYO59","PYO65","PYO4.PYO45","PYO4.PYO59","PYO4.PYO65","PYO45.PYO59","PYO45.PYO65","PYO59.PYO65","Rs.UW551"))
+ylim1=1.5*(max(data_AUC$AUC))
+ylim2=1.2*(max(data_AUC$AUC))
+tiff("AUC_stats_combinations_letters.tiff",res=300,he=200,wi=250,units="mm")
+ ggboxplot(data=data_AUC, x = "Treatment", y = "AUC",
+  fill = "Treatment")+ theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = Treatment), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=6.5,
+            check_overlap = F)+scale_x_discrete(labels = NULL, breaks = NULL) +scale_fill_manual(values = color_table2$Color)+
+  xlab("Treatments")+   ylab("Area under the diseased curve")+
+   theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+
+########
+#2. REPEAT WITH INDIVIDUAL AND DOUBLE PHAGE TREATMENTS.
+#######
+
+color_table <-  tibble(
+  Group_Name = c("Negative_control","Individual_Healthy",
+"Double_Healthy","Rs.UW551_Healthy",
+"Individual_Diseased",
+"Double_Diseased","Rs.UW551_Diseased"),
+  Color = c("#666666","#DDCC77","#E69F00",
+"#56B4E9","#0072B2","#CC6677",
+"#661100")  )
+
+
+
+color_table <-  tibble(
+  Group_Name = c("Negative_control","Individual","Double","Rs.UW551"),
+  Color = c("#666666","#E69F00","#0072B2","#882255")  )
+
+
+
+data_summary <- summarySE(data = data2, measurevar = "Disease_Index", 
+                          groupvars = c("Time_DPI", "Treatment_decoded", "Treatment_phagenum"),
+                          na.rm = FALSE, conf.interval = 0.95, .drop = TRUE)
+tiff("DI_average2_I_D.tiff",res=300,he=200,wi=200,units="mm")
+ggplot(data = data_summary, aes(x = Time_DPI, y = Disease_Index, 
+                                          group = Treatment_decoded, col = Treatment_phagenum)) +
+    geom_line(size = 1.1)  +
+       labs(x = "Time (DPI)",
+         y = "Disease Index",
+         col = "Treatment") +scale_colour_manual(values = color_table$Color)+
+    theme_bw()+
+    theme(panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          panel.grid.major.y = element_blank(),
+          panel.grid.minor.y = element_blank())+ theme( text = element_text(size = 30))
+dev.off()
+
+
+
+#########Plots AUC
+data_AUC$Treatment_phagenum <- case_when(data_AUC$Treatment == "PYO4" ~ "Individual",
+                                     data_AUC$Treatment == "PYO45" ~ "Individual",
+                                     data_AUC$Treatment == "PYO59" ~ "Individual",
+                                     data_AUC$Treatment == "PYO65" ~ "Individual",
+                                     data_AUC$Treatment == "PYO4.PYO45" ~ "Double",
+                                     data_AUC$Treatment == "PYO4.PYO59" ~ "Double",
+                                     data_AUC$Treatment == "PYO4.PYO65" ~ "Double",
+                                     data_AUC$Treatment == "PYO45.PYO59" ~ "Double",
+                                     data_AUC$Treatment == "PYO45.PYO65" ~ "Double",
+                                     data_AUC$Treatment == "PYO59.PYO65" ~ "Double",
+                                     data_AUC$Treatment == "Rs.UW551" ~ "Rs.UW551",
+                                     data_AUC$Treatment == "Negative_control" ~ "Negative_control"
+)
+
+
+data_AUC$Treatment_phagenum <- factor(data_AUC$Treatment_phagenum, 
+                                 levels = c("Negative_control", "Individual", "Double", "Rs.UW551"))
+
+
+library(FSA)
+library(rcompanion)
+model  <- lm(AUC ~ Treatment_phagenum, data = data_AUC)
+shapiro_test(residuals(model)) ####non normally distributed 
+####no ANOVA use KRUSKALL WALLIs
+res.kruskal <- data_AUC %>% kruskal_test(AUC ~ Treatment_phagenum)
+res.kruskal
+##  AUC     144      14.3     3 0.00254 Kruskal-Wallis
+
+
+pwc2 <- dunnTest(AUC ~ Treatment_phagenum,data=data_AUC,method="bonferroni")
+pwc2_res <- pwc2$res
+cld <- cldList(comparison = pwc2_res$Comparison,
+        p.value    = pwc2_res$P.adj,
+        threshold  = 0.05)[1:2]
+names(cld)[1]<-"Treatment" # change the name of grouping factor according to the dataset (df)
+cld
+
+color_table <-  tibble(
+  Group_Name = c("Negative_control","Individual","Double","Rs.UW551"),
+  Color = c("#666666","#E69F00","#0072B2","#882255")  )
+
+
+
+library(ggpubr)
+cld$Treatment=factor(cld$Treatment,levels=c("Negative_control","Individual","Double","Rs.UW551"))
+ylim1=1.5*(max(data_AUC$AUC))
+ylim2=1.2*(max(data_AUC$AUC))
+tiff("AUC_stats_combinations_letters_I_D.tiff",res=300,he=200,wi=250,units="mm")
+ ggboxplot(data=data_AUC, x = "Treatment_phagenum", y = "AUC",
+  fill = "Treatment_phagenum")+ theme_bw() +ylim(0,ylim1)+
+  geom_text(data = cld, aes(label = cld$Letter, y = ylim2, x = Treatment), 
+            vjust = -0.5,
+            hjust= 0.5,
+            fontface = "bold",
+            size=8.5,
+            check_overlap = F)+scale_x_discrete(labels = NULL, breaks = NULL) +scale_fill_manual(values = color_table$Color)+
+  xlab("Treatments")+   ylab("Area under the diseased curve")+
+  ggtitle("Area under the diseased curve")+ theme(strip.text.x = element_text(size = 30))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme( text = element_text(size = 25))
+dev.off()
+
+
+#################X-square test for proportion between individual and double phages
+
+data$SampleName=paste("FERA.",data$Plant.ID)
+data$SampleName=sub(" ","", data$SampleName)
+
+
+data3=subset(data2,data2$Time_DPI==21)
+data3$category3=sub("Control","Negative_control",data3$category3)
+data4=data3 %>% group_by(Treatment_phagenum, category3)  %>%     dplyr::summarise(count=n())
+data4=as.data.frame(data4)
+####
+data5=aggregate(data4$count, by=list(Treatment_phagenum=data4$Treatment_phagenum), FUN=sum)
+data6=left_join(data4, data5, by="Treatment_phagenum")
+data6$per=100*(data6$count/data6$x)
+
+data6=as.data.frame(data6)
+data6$category3=sub("Disease","Diseased",data4$category3)
+data6$category3=factor(data6$category3,levels=c("Negative_control","Healthy","Diseased"))
+
+write.table(data6, "proportion_H_D_in_I_D_treatment.txt",sep="\t",col.names=T)
+res <- prop.test(x = 45.83, n = 72, p = 0.3125, correct = FALSE, alternative = "greater")
+res$p.value
+
+#x = disease proportion in double
+#n = number in double
+#p = disease proportion in individual
+#        1-sample proportions test without continuity correction
+
+#data:  45.83 out of 72, null probability 0.3125
+#X-squared = 35.186, df = 1, p-value = 1.498e-09
+#alternative hypothesis: true p is greater than 0.3125
+#95 percent confidence interval:
+# 0.5399132 1.0000000
+#sample estimates:
+#        p 
+#0.6365278 
+
+
+
+
+############ go to Ralstonia and phage abundance
